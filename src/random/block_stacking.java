@@ -1,339 +1,328 @@
 package application;
-
-import java.io.File;
-import java.io.IOException;
-import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 import javax.inject.Inject;
 import javax.inject.Named;
-
-
 import com.kuka.roboticsAPI.applicationModel.RoboticsAPIApplication;
-import com.kuka.roboticsAPI.deviceModel.JointEnum;
-import com.kuka.roboticsAPI.deviceModel.JointPosition;
+import static com.kuka.roboticsAPI.motionModel.BasicMotions.*;
+
+import com.kuka.roboticsAPI.conditionModel.ForceCondition;
 import com.kuka.roboticsAPI.deviceModel.LBR;
+//import com.kuka.roboticsAPI.deviceModel.kmp.SunriseOmniMoveMobilePlatform;
+import com.kuka.roboticsAPI.executionModel.CommandInvalidException;
+import com.kuka.roboticsAPI.executionModel.IFiredConditionInfo;
+import com.kuka.roboticsAPI.executionModel.IFiredTriggerInfo;
+import com.kuka.roboticsAPI.geometricModel.AbstractFrame;
+import com.kuka.roboticsAPI.geometricModel.CartDOF;
+import com.kuka.roboticsAPI.geometricModel.CartPlane;
 import com.kuka.roboticsAPI.geometricModel.Frame;
 import com.kuka.roboticsAPI.geometricModel.Tool;
+import com.kuka.roboticsAPI.geometricModel.Workpiece;
 import com.kuka.roboticsAPI.geometricModel.World;
+import com.kuka.roboticsAPI.geometricModel.math.CoordinateAxis;
+import com.kuka.roboticsAPI.geometricModel.math.Transformation;
+import com.kuka.roboticsAPI.geometricModel.math.Vector;
+import com.kuka.roboticsAPI.motionModel.IMotion;
+import com.kuka.roboticsAPI.motionModel.IMotionContainer;
+import com.kuka.roboticsAPI.motionModel.RelativeLIN;
+import com.kuka.roboticsAPI.motionModel.Spline;
+import com.kuka.roboticsAPI.motionModel.SplineMotionCP;
+import com.kuka.roboticsAPI.motionModel.SplineOrientationType;
+import com.kuka.roboticsAPI.motionModel.controlModeModel.CartesianImpedanceControlMode;
+import com.kuka.roboticsAPI.motionModel.controlModeModel.CartesianSineImpedanceControlMode;
 import com.kuka.roboticsAPI.sensorModel.ForceSensorData;
 import com.kuka.roboticsAPI.sensorModel.TorqueSensorData;
 import com.kuka.task.ITaskLogger;
-import com.prosysopc.ua.ApplicationIdentity;
-import com.prosysopc.ua.SecureIdentityException;
-import com.prosysopc.ua.UserIdentity;
-import com.prosysopc.ua.client.UaClient;
-import com.prosysopc.ua.stack.builtintypes.DataValue;
-import com.prosysopc.ua.stack.builtintypes.LocalizedText;
-import com.prosysopc.ua.stack.builtintypes.NodeId;
-import com.prosysopc.ua.stack.builtintypes.UnsignedInteger;
-import com.prosysopc.ua.stack.builtintypes.Variant;
-import com.prosysopc.ua.stack.cert.DefaultCertificateValidator;
-import com.prosysopc.ua.stack.cert.DefaultCertificateValidator.IgnoredChecks;
-import com.prosysopc.ua.stack.cert.PkiDirectoryCertificateStore;
-import com.prosysopc.ua.stack.common.ServiceResultException;
-import com.prosysopc.ua.stack.core.ApplicationDescription;
-import com.prosysopc.ua.stack.core.ApplicationType;
-import com.prosysopc.ua.stack.core.Identifiers;
-import com.prosysopc.ua.stack.core.ReferenceDescription;
-import com.prosysopc.ua.stack.transport.security.SecurityMode;
-import com.prosysopc.ua.stack.builtintypes.NodeId;
+import com.kuka.common.ThreadUtil;
+import com.kuka.generated.ioAccess.MediaFlangeIOGroup;
+import com.kuka.geometry.ObjectFrame;
 
-public class OPCUA_Client_Control3 {
-	// ~~~ Injecting other Classes ~~~ \\
+import static com.kuka.roboticsAPI.motionModel.HRCMotions.*;
+ 
+
+/**
+* Implementation of a robot application.
+* <p>
+* The application provides a {@link RoboticsAPITask#initialize()} and a 
+* {@link RoboticsAPITask#run()} method, which will be called successively in 
+* the application lifecycle. The application will terminate automatically after 
+* the {@link RoboticsAPITask#run()} method has finished or after stopping the 
+* task. The {@link RoboticsAPITask#dispose()} method will be called, even if an 
+* exception is thrown during initialization or run. 
+* <p>
+* <b>It is imperative to call <code>super.dispose()</code> when overriding the 
+* {@link RoboticsAPITask#dispose()} method.</b> 
+* 
+* @see UseRoboticsAPIContext
+* @see #initialize()
+* @see #run()
+* @see #dispose()
+*/
+public class FYP_HRC_2025 extends RoboticsAPIApplication {
 	@Inject
-	private LBR robot;				//Access to Robot Info
-	@Inject
-	private ITaskLogger logger;		//Printing in non background tasks
-	@Inject
-	@Named("RobotiqGripper")		
-	private Tool gripper;			//Access to Robot attached gripper info
+	private LBR robot;
 	@Inject 
-	private Gripper2F gripper2F1;	//Access to Gripper info
-	//++++Setup OPCUA Variables (Add NodeID and Variable Here)++++\\
-	//Control (INPUTS)
-	//-OPC UA Client
-	//--Disconnect
-	public boolean Connected;
-	//--Start
-	public NodeId NID_Start;
-	public boolean Start;
-	//--Program ID
-	public NodeId NID_ProgID;
-	public int ProgID;
-	//--Count
-	public NodeId NID_Count;
-	public int Count;
-	//--End
-	public NodeId NID_End;
-	public boolean End;
-	//--Ready
-	public NodeId NID_Ready;
-	public boolean Ready;
-
-
-	//-Robot
-	//--Joint 1
-	public NodeId NID_Joi1;
-	public double Joi1;
-	//--Joint 2
-	public NodeId NID_Joi2;
-	public double Joi2;
-	//--Joint 3
-	public NodeId NID_Joi3;
-	public double Joi3;
-	//--Joint 4
-	public NodeId NID_Joi4;
-	public double Joi4;
-	//--Joint 5
-	public NodeId NID_Joi5;
-	public double Joi5;
-	//--Joint 6
-	public NodeId NID_Joi6;
-	public double Joi6;
-	//--Joint 7
-	public NodeId NID_Joi7;
-	public double Joi7;
-	//--Vel
-	public NodeId NID_Vel;
-	public double Vel;
-
-	//--PosX
-	public NodeId NID_PosX;
-	public double PosX;
-	//--PosY
-	public NodeId NID_PosY;
-	public double PosY;
-	//--PosZ
-	public NodeId NID_PosZ;
-	public double PosZ;
-	//--RotA
-	public NodeId NID_RotA;
-	public double RotA;
-	//--RotB
-	public NodeId NID_RotB;
-	public double RotB;
-	//--RotC
-	public NodeId NID_RotC;
-	public double RotC;
-
-	public NodeId NID_int1;
-	public int int1;
-	public NodeId NID_int2;
-	public int int2;
-	public NodeId NID_int3;
-	public int int3;
-
-	//--JAI Snap
-	public NodeId NID_JAISnap;
-	public boolean Snap;
-	public NodeId NID_JAIRec;
-	public boolean Rec;
-	//--JAI Name
-	public NodeId NID_JAIName;
-	public String JAIName;
-	//--JAI Ready
-	public NodeId NID_JAIReady;
-	public Boolean JAIReady;
-
-	//Gripper
-	//--Gripper Control
-	public NodeId NID_GripperControl;
-	public boolean GripperControl;
-	//--Gripper Control
-	public NodeId NID_GripperAct;
-	public boolean GripperAct;
-	//--Gripper Control
-	public NodeId NID_GripperSpeed;
-	public int GripperSpeed;
-	//--Gripper Control
-	public NodeId NID_GripperForce;
-	public int GripperForce;
-	//--Gripper Control
-	public NodeId NID_GripperPos;
-	public int GripperPos;
-
-
-	public UnsignedInteger attributeId = UnsignedInteger.valueOf(13);
-
-	public UaClient client = new UaClient("opc.tcp://172.24.200.1:4840/");
-
-	public void SetUp() throws Exception {
-		client.setSecurityMode(SecurityMode.NONE);
-		initialize(client);
-		client.setUserIdentity(new UserIdentity("Admin","password"));
-		client.connect();
-		NodeId target;
-		NodeId targetC;
-		NodeId targetD;
-		NodeId nodeId = Identifiers.RootFolder;
-		NodeId nodeIdC;
-		NodeId nodeIdD;
-		client.getAddressSpace().setMaxReferencesPerNode(1000);
-		client.getAddressSpace().setReferenceTypeId(Identifiers.HierarchicalReferences);
-
-
-		List<ReferenceDescription> references;
-		target = findNode("Objects", references);
-		nodeId = target;
-
-		references = client.getAddressSpace().browse(nodeId);
-		target = findNode("robot3", references);
-		nodeId = target;
-
-		targetC = findNode("Communication", references);
-		nodeIdC = targetC;
-
-		targetD = findNode("Camera1", references);
-		nodeIdD = targetD;
-		
-		references = client.getAddressSpace().browse(nodeId);
-		List<ReferenceDescription> referencesC = client.getAddressSpace().browse(nodeIdC);
-		List<ReferenceDescription> referencesD = client.getAddressSpace().browse(nodeIdD);
-
-		NID_Connected = findNode("R3c_Connected",references);
-		NID_Start = findNode("R3c_Start",references);
-		NID_ProgID = findNode("R3c_ProgID",references);
-		NID_Count = findNode("LabCount",referencesC);
-		NID_End = findNode("R3f_End",references);
-		NID_Ready = findNode("R3f_Ready",references);
-		
-		NID_int1 = findNode("R3c_int1",references);
-		NID_int2 = findNode("R3c_int2",references);
-		NID_int3 = findNode("R3c_int3",references);
-		
-		NID_Count = findNode("LabCount",referencesC);
-		NID_JAISnap = findNode("C1c_Snap",referencesD);
-		NID_JAIRec = findNode("C1c_Rec",referencesD);
-		NID_JAIName = findNode("C1c_Name",referencesD);
-		NID_JAIReady = findNode("C1f_Ready",referencesD);
-		
-		NID_Joi1 = findNode("R3c_Joi1", references);
-		NID_Joi2 = findNode("R3c_Joi2", references);
-		NID_Joi3 = findNode("R3c_Joi3", references);
-		NID_Joi4 = findNode("R3c_Joi4", references);
-		NID_Joi5 = findNode("R3c_Joi5", references);
-		NID_Joi6 = findNode("R3c_Joi6", references);
-		NID_Joi7 = findNode("R3c_Joi7", references);
-		NID_Vel = findNode("R3c_Vel", references);
-
-		NID_PosX = findNode("R3c_PosX", references);
-		NID_PosY = findNode("R3c_PosY", references);
-		NID_PosZ = findNode("R3c_PosZ", references);
-		NID_RotA = findNode("R3c_RotA", references);
-		NID_RotB = findNode("R3c_RotB", references);
-		NID_RotC = findNode("R3c_RotC", references);
-		
-		NID_GripperControl = findNode("R3c_GripperControl", references);
-		NID_GripperAct = findNode("R3c_GripperAct", references);
-		NID_GripperSpeed = findNode("R3c_GripperSpeed", references);
-		NID_GripperForce = findNode("R3c_GripperForce", references);
-		NID_GripperPos = findNode("R3c_GripperPos", references);
-		
+	private Gripper2F gripper2F1;
+	@Inject
+	private MediaFlangeIOGroup mF;
+	@Inject
+	@Named("RobotiqGripper")
+	private Tool gripper;
+	@Inject
+	private ITaskLogger logger;
+	@Inject
+	private MediaFlangeIOGroup mediaFlange;
+	private CartesianImpedanceControlMode springMode = new CartesianImpedanceControlMode();
+ 
+	@Override
+	public void initialize() {		
+		mF.setLEDBlue(true);
+		gripper.attachTo(robot.getFlange());
+		gripper2F1.setSpeed(155);
+		gripper2F1.setForce(155);
+		springMode.parametrize(CartDOF.X,
+				CartDOF.Y).setStiffness(5000);
+		springMode.parametrize(CartDOF.Z).setStiffness(200);
+		springMode.parametrize(CartDOF.ROT).setStiffness(300);
 	}
-
-	public void ServerUpdate() throws Exception {
-		//READ Control Variables (Create function for writing)
-		Connected = client.readAttribute(NID_Connected,attributeId).getValue().booleanValue();
-		Start = client.readAttribute(NID_Start,attributeId).getValue().booleanValue();
-		ProgID = client.readAttribute(NID_ProgID,attributeId).getValue().intValue();
-		Count = client.readAttribute(NID_Count,attributeId).getValue().intValue();
-		int1 = client.readAttribute(NID_int1,attributeId).getValue().intValue();
-		int2 = client.readAttribute(NID_int2,attributeId).getValue().intValue();
-		int3 = client.readAttribute(NID_int3,attributeId).getValue().intValue();
-		JAIReady = client.readAttribute(NID_JAIReady,attributeId).getValue().booleanValue();
-
-		
-		Joi1 = client.readAttribute(NID_Joi1,attributeId).getValue().doubleValue();
-		Joi2 = client.readAttribute(NID_Joi2,attributeId).getValue().doubleValue();
-		Joi3 = client.readAttribute(NID_Joi3,attributeId).getValue().doubleValue();
-		Joi4 = client.readAttribute(NID_Joi4,attributeId).getValue().doubleValue();
-		Joi5 = client.readAttribute(NID_Joi5,attributeId).getValue().doubleValue();
-		Joi6 = client.readAttribute(NID_Joi6,attributeId).getValue().doubleValue();
-		Joi7 = client.readAttribute(NID_Joi7,attributeId).getValue().doubleValue();
-		Vel = client.readAttribute(NID_Vel,attributeId).getValue().doubleValue();
-		PosX = client.readAttribute(NID_PosX,attributeId).getValue().doubleValue();
-		PosY = client.readAttribute(NID_PosY,attributeId).getValue().doubleValue();
-		PosZ = client.readAttribute(NID_PosZ,attributeId).getValue().doubleValue();
-		RotA = client.readAttribute(NID_RotA,attributeId).getValue().doubleValue();
-		RotB = client.readAttribute(NID_RotB,attributeId).getValue().doubleValue();
-		RotC = client.readAttribute(NID_RotC,attributeId).getValue().doubleValue();
 	
-		GripperControl = client.readAttribute(NID_GripperControl,attributeId).getValue().booleanValue();
-		GripperAct = client.readAttribute(NID_GripperAct,attributeId).getValue().booleanValue();
-		GripperSpeed = client.readAttribute(NID_GripperSpeed,attributeId).getValue().intValue();
-		GripperPos = client.readAttribute(NID_GripperPos,attributeId).getValue().intValue();
-		GripperForce = client.readAttribute(NID_GripperPos,attributeId).getValue().intValue();
+	public boolean checkForBlock() {
+		final double FORCE_THRESHOLD = 9;
+		final double VELOCITY = 0.035; 
 		
-		if (GripperControl == true){
-			gripper2F1.setForce(GripperForce);
-			gripper2F1.setSpeed(GripperSpeed);
-			if(GripperAct == true){
-				gripper2F1.setPos(GripperPos);
-			}
+		ForceCondition forceCondition = ForceCondition.createNormalForceCondition(
+				gripper.getFrame("/TCP"), 
+				CoordinateAxis.Z, 
+				FORCE_THRESHOLD);
+		
+//		ForceCondition forceCondition = ForceCondition.createSpatialForceCondition(
+//				 gripper.getFrame("/TCP"),
+//				 FORCE_THRESHOLD);
+		
+		logger.info("We are about to check for block");
+		
+		IMotionContainer blockCheck = gripper.move(linRel(0.0, 0.0, 30).setMode(springMode).setJointVelocityRel(VELOCITY).breakWhen(forceCondition));
+		
+		
+		if (!blockCheck.hasFired(forceCondition)) {
+			logger.info("We have checked for block and it was a failure");
+			return false;
+		}
+		
+		logger.info("We have checked for block and it was successful");
+		logger.info("Fired Condition for checking: " + blockCheck.getFiredBreakConditionInfo().toString());
+		
+		return true;
+	}
+	
+	public void waitForUserInput() {
+		while (!mediaFlange.getUserButton()) {
+			ThreadUtil.milliSleep(200);
 		}
 	}
-	//Set Write Functions for Flags/Outputs
-	public void setCount(int A) throws Exception {
-		client.writeAttribute(NID_Count, attributeId,  A);
-	}
-
-	public void setStart(boolean A) throws Exception {
-		client.writeAttribute(NID_Start, attributeId,  A);
+	
+	public void moveDownAndPickUp() {
+		gripper2F1.open();
+		gripper.move(linRel(0.0, 0.0, 50));
+		gripper2F1.close();
 	}
 	
-	public void setProgID(int A) throws Exception {
-		client.writeAttribute(NID_ProgID, attributeId,  A);
-	}
-
-	public void setReady(boolean A) throws Exception {
-		client.writeAttribute(NID_Ready, attributeId,  A);
-	}
-
-	public void setEnd(boolean A) throws Exception {
-		client.writeAttribute(NID_End, attributeId,  A);
-	}
-
-	public void setSnap(boolean A) throws Exception {
-		client.writeAttribute(NID_JAISnap, attributeId,  A);
-	}
+	public void placeBlock() {
+		final double FORCE_THRESHOLD = 9;
+		final double VELOCITY = 0.05;
+		
+		ForceCondition forceCondition = ForceCondition.createSpatialForceCondition(
+				 gripper.getFrame("/TCP"),
+				 FORCE_THRESHOLD);
+		
+//		ForceCondition forceCondition = ForceCondition.createNormalForceCondition(
+//				gripper.getFrame("/TCP"), 
+//				CoordinateAxis.Z, 
+//				FORCE_THRESHOLD);
+		
+		robot.move(linRel(0.0, 0.0, 200).setJointVelocityRel(VELOCITY).breakWhen(forceCondition));
+		
+//		logger.info("Fired Condition for placing stack: " + placeMovement.getFiredBreakConditionInfo().toString());
+		
+		gripper2F1.open();
+		robot.move(lin(getApplicationData().getFrame("/Alt_Stack")).setJointVelocityRel(0.4));
+	}	
 	
-	public void setRec(boolean A) throws Exception {
-		client.writeAttribute(NID_JAIRec, attributeId,  A);
-	}
-
-	public void setSnapName(String A) throws Exception {
-		client.writeAttribute(NID_JAIName, attributeId,  A);
-	}
-	
-	public void setGripperControl(boolean A) throws Exception {
-		client.writeAttribute(NID_GripperControl, attributeId, A);
-	}
-	
-	protected static void initialize(UaClient client) throws SecureIdentityException, IOException, UnknownHostException {
-		ApplicationDescription appDescription = new ApplicationDescription();
-		appDescription.setApplicationName(new LocalizedText("Robot4_Control", Locale.ENGLISH));
-		appDescription.setApplicationUri("Robot4_Control");
-		appDescription.setProductUri("Robot4_Control");
-		appDescription.setApplicationType(ApplicationType.Client);
-		final ApplicationIdentity identity = new ApplicationIdentity();
-		identity.setApplicationDescription(appDescription);
-		client.setApplicationIdentity(identity);
-	}
-
-	public NodeId findNode(String comp, List<ReferenceDescription> references) throws ServiceResultException{
-		for (int i = 0; i < references.size(); i++) {
-			if (references.get(i).getDisplayName().toString().contains((comp))){
-				return client.getAddressSpace().getNamespaceTable().toNodeId(references.get(i).getNodeId());
+	public void stackBlocks(List<Frame> frames) {
+		for (Frame frame : frames) {
+			robot.move(lin(frame).setJointVelocityRel(0.5));
+			gripper2F1.close();
+			
+			boolean blockExists = false;
+			while (!blockExists) {
+				ThreadUtil.milliSleep(200);
+				blockExists = checkForBlock();
+				robot.move(ptp(frame).setJointVelocityRel(0.4));
+				if (!blockExists) {
+					setLEDColour('r');
+					waitForUserInput();
+					setLEDColour('b');
+					ThreadUtil.milliSleep(500);
+				}
 			}
+		    moveDownAndPickUp();
+		    robot.move(lin(frame).setJointVelocityRel(0.8));
+		    robot.move(lin(getApplicationData().getFrame("/Alt_Stack")).setJointVelocityRel(0.8));
+		    placeBlock();
 		}
-		return null;
 	}
-
-
-	public void clientDisconnect(){
-		client.disconnect();
+	
+	public List<Frame> collectFrames() {
+		final int MS_BETWEEN_FRAMES = 300;
+		
+		
+		robot.move(lin(getApplicationData().getFrame("/Alt_Start")).setJointVelocityRel(0.4));
+				
+		CartesianImpedanceControlMode cartImpCtrlMode = new
+				CartesianImpedanceControlMode();
+		
+		cartImpCtrlMode.parametrize(CartDOF.X,
+				CartDOF.Y).setStiffness(0).setDamping(1);
+		cartImpCtrlMode.parametrize(CartDOF.Z).setStiffness(5000).setDamping(1).setAdditionalControlForce(20); 
+		cartImpCtrlMode.parametrize(CartDOF.ROT).setStiffness(300).setDamping(1);
+		
+		IMotionContainer holdPosition = gripper.moveAsync(positionHold(cartImpCtrlMode, -1, TimeUnit.SECONDS));
+		
+		List<Frame> frames = new ArrayList<Frame>();
+		
+		int i = 3;
+		setLEDColour('g');
+		while (i > 0) {
+			waitForUserInput();
+			Frame currentPos = robot.getCurrentCartesianPosition(gripper.getFrame("/TCP"));
+//			Frame currentPos = gripper.getFrame("/TCP");
+			currentPos.setZ(250.8);
+			currentPos.setAlphaRad(0);
+			currentPos.setBetaRad(0);
+			currentPos.setGammaRad(3.1415);
+			frames.add(currentPos);
+			i--;
+			ThreadUtil.milliSleep(MS_BETWEEN_FRAMES);
+		}
+		setLEDColour('b');
+		holdPosition.cancel();
+		return frames;
+	}
+	
+	public void setLEDColour(char colour) {
+		if (colour == 'g') {
+			mF.setLEDRed(false);
+			mF.setLEDBlue(false);
+			mF.setLEDGreen(true);
+		}
+		else if (colour == 'b') {
+			mF.setLEDRed(false);
+			mF.setLEDBlue(true);
+			mF.setLEDGreen(false);
+		}
+		else {
+			mF.setLEDRed(true);
+			mF.setLEDBlue(false);
+			mF.setLEDGreen(false);
+		}
+	}
+	
+	// block placing
+	@Override
+	public void run() {
+	    // Move to home position with red light
+//		logger.info(Double.toString(getApplicationData().getFrame("/Alt_Start").getGammaRad()));
+		gripper2F1.close();
+		
+		setLEDColour('b');
+		
+		List<Frame> frames = collectFrames();
+		
+		ThreadUtil.milliSleep(2000);
+		
+		stackBlocks(frames);
+		
+		setLEDColour('r');
+		
+//	    mF.setLEDRed(true);
+//	    robot.move(ptp(getApplicationData().getFrame("/HOME")).setJointVelocityRel(0.4));
+//
+//	    // Move through pick-up sequence
+	    
+	    
+	    
+//	    robot.move(lin(getApplicationData().getFrame("/P3")).setJointVelocityRel(0.1));
+//	    gripper2F1.moveTo(180);
+//	    robot.move(lin(getApplicationData().getFrame("/P4")).setJointVelocityRel(0.4));
+//	    gripper2F1.close();
+//	    robot.move(lin(getApplicationData().getFrame("/P5")).setJointVelocityRel(0.4));
+//	    robot.move(ptp(getApplicationData().getFrame("/P6")).setJointVelocityRel(0.4));
+//	    robot.move(ptp(getApplicationData().getFrame("/P7")).setJointVelocityRel(0.4));
+//
+////	    // Get the current position of the robot (base frame or sensor)
+////	    Frame currentRobotFrame = robot.getCurrentCartesianPosition(null);  // Assuming `getCurrentFrame()` gives the robot's base frame
+////
+////	    // Dynamically create a reference frame based on the robot's position
+////	    Frame referenceFrame = currentRobotFrame;
+////
+////	    // Create a sensor frame with an offset from the reference frame (for example, 0.1m in the X direction)
+////	    Frame sensorFrame = currentRobotFrame;  // 0.1m offset in X direction for the sensor
+////
+////	    // Set force condition to detect a pulling force of 15N in positive X direction
+////	    ForceCondition condition = ForceCondition.createSpatialForceCondition(
+////	        referenceFrame,  // Using the dynamically created reference frame
+////	        sensorFrame,     // Using the dynamically created sensor frame
+////	        15.0,            // force threshold in Newtons
+////	        5.0              // torque threshold in Nm
+////	    );
+////
+////	    // Move in place, waiting for pull
+////	    IMotionContainer holdMotion = robot.moveAsync(
+////	        linRel(0, 0, 0, World.Current.getRootFrame())  // Relative motion with respect to the root frame
+////	            .setMode(springRobot)  // Applying the springRobot mode
+////	            .breakWhen(condition)  // Break the motion when the force condition is met
+////	    );
+//
+////	    // Wait for the force to be triggered
+////	    holdMotion.await();
+//	    Frame initialPos = robot.getCurrentCartesianPosition(gripper.getFrame("/TCP"));
+////	    Frame initialPos = gripper.getDefaultMotionFrame().copyWithRedundancy(); // Get current tool frame
+////	    gripper.move(ptp(0.0,0.785398,0.0,-1.13446,0.0,-0.436332,1.5708).setJointVelocityRel(0.2));
+//
+//	    m1 = gripper.moveAsync(positionHold(springRobot, -1, TimeUnit.SECONDS)); // hold position
+//	    Frame currentPos = robot.getCurrentCartesianPosition(gripper.getFrame("/TCP"));
+//	    
+//	    while (true) {
+//	        ThreadUtil.milliSleep(200); // check every 200ms
+//
+//	        currentPos = robot.getCurrentCartesianPosition(gripper.getFrame("/TCP"));
+//	        double difference = currentPos.getX() - initialPos.getX();
+//	        logger.info(String.format("=%.4f,", difference));
+//	        double dx = Math.abs(currentPos.getX() - initialPos.getX());
+//	        double dy = Math.abs(currentPos.getY() - initialPos.getY());
+//	        double dz = Math.abs(currentPos.getZ() - initialPos.getZ());
+//
+//	        if (dx > 30 || dy > 30 || dz > 30) {
+//	            logger.info(String.format("Motion detected: dx=%.4f, dy=%.4f, dz=%.4f", dx, dy, dz));
+//	            break;
+//	        }
+//	    }
+//
+//	    m1.cancel(); // stop holding position
+//
+//	    // Pull detected, respond by releasing business card
+//	    gripper2F1.moveTo(180); // Open gripper
+//	    mF.setLEDGreen(true);   // Signal success
+//	    ThreadUtil.milliSleep(2000); // Hold position
+//	    gripper2F1.close();
+//	    // Return to home
+//	    mF.setLEDRed(true);
+//	    robot.move(ptp(getApplicationData().getFrame("/HOME")).setJointVelocityRel(0.2));
+//
+//	    // Set light to blue to indicate reset
+//	    mF.setLEDBlue(true);
 	}
 
 }
