@@ -1,5 +1,6 @@
 import cv2
 import mediapipe as mp
+import pyrealsense2 as rs
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe import solutions
@@ -14,6 +15,15 @@ MAX_NUM_HANDS = 1 # Detect up to 2 hands
 MIN_HAND_DETECTION_CONFIDENCE = 0.5
 MIN_HAND_PRESENCE_CONFIDENCE = 0.5
 MIN_TRACKING_CONFIDENCE = 0.5
+
+# --- Configure Camera ---
+pipe = rs.pipeline()
+cfg = rs.config()
+
+cfg.enable_stream(rs.stream.color, 640,480, rs.format.bgr8, 30)
+
+pipe.start(cfg)
+
 
 # --- Global variable to store the latest detection results ---
 latest_hand_detection_result = None
@@ -40,11 +50,11 @@ def main():
 
     landmarker = vision.HandLandmarker.create_from_options(options)
 
-    # --- Initialize OpenCV for webcam input ---
-    cap = cv2.VideoCapture(CAP_DEVICE)
-    if not cap.isOpened():
-        print(f"Error: Could not open video device {CAP_DEVICE}")
-        return
+    # # --- Initialize OpenCV for webcam input ---
+    # cap = cv2.VideoCapture(CAP_DEVICE)
+    # if not cap.isOpened():
+    #     print(f"Error: Could not open video device {CAP_DEVICE}")
+    #     return
 
     # --- Drawing setup ---
     mp_drawing = solutions.drawing_utils
@@ -54,10 +64,10 @@ def main():
     prev_frame_time = 0
     new_frame_time = 0
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    while True:
+        frame = pipe.wait_for_frames()
+        frame = frame.get_color_frame()
+        frame = np.asanyarray(frame.get_data())
 
         # Flip the frame horizontally for a more natural mirror view
         frame = cv2.flip(frame, 1)
@@ -130,7 +140,7 @@ def main():
 
     # --- Release resources ---
     landmarker.close()
-    cap.release()
+    # cap.release()
     cv2.destroyAllWindows()
 
 # flat hand detection
