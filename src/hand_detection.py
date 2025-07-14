@@ -21,6 +21,7 @@ pipe = rs.pipeline()
 cfg = rs.config()
 
 cfg.enable_stream(rs.stream.color, 640,480, rs.format.bgr8, 30)
+cfg.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 
 pipe.start(cfg)
 
@@ -65,9 +66,13 @@ def main():
     new_frame_time = 0
 
     while True:
-        frame = pipe.wait_for_frames()
-        frame = frame.get_color_frame()
-        frame = np.asanyarray(frame.get_data())
+        frames = pipe.wait_for_frames()
+        depth_frame = frames.get_depth_frame()
+        color_frame = frames.get_color_frame()
+        if not depth_frame or not color_frame:
+            continue
+
+        frame = np.asanyarray(color_frame.get_data())
 
         # Flip the frame horizontally for a more natural mirror view
         frame = cv2.flip(frame, 1)
@@ -94,6 +99,8 @@ def main():
                     landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z)
                     for landmark in hand_landmarks
                 ])
+
+
                 mp_drawing.draw_landmarks(
                     frame,
                     hand_landmarks_proto,
@@ -125,6 +132,19 @@ def main():
 
                 cv2.arrowedLine(frame, start_point, end_point, vector_color, vector_thickness, cv2.LINE_AA, 0, tip_length)
 
+                # Convert normalized coordinates to pixel coordinates
+                palm_x = int(w - centroid[0] * w)
+                palm_y = int(h - centroid[1] * h)
+
+                depth = -1
+
+                if palm_x > 0 and palm_x < w and palm_y > 0 and palm_y < h:
+                    # Get depth (in meters)
+                    depth = depth_frame.get_distance(palm_x, palm_y)
+
+                # Show distance on the frame
+                cv2.putText(frame, f"Depth: {depth:.2f}m", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
         # --- Display FPS ---
         new_frame_time = time.time()
         fps = 1 / (new_frame_time - prev_frame_time)
@@ -145,7 +165,9 @@ def main():
 
 # flat hand detection
 def open_flat_hand(landmarks):
-    data = [[landmark.x, landmark.y, landmark.z] for landmark in landmarks]
+    indexes = [0, 1, 2, 5, 9, 13, 17]
+    
+    data = [[landmarks[idx].x, landmarks[idx].y, landmarks[idx].z] for idx in indexes]
     data = np.array(data)
     centroid = np.mean(data, axis=0)
 
@@ -155,7 +177,7 @@ def open_flat_hand(landmarks):
     
     min_column = np.argmin(D)
 
-    if D[min_column] > .07:
+    if D[min_column] > .2:
         return None, None
     
     normal_vector = V[:, min_column]
