@@ -1,5 +1,5 @@
 from hand_detection_module import HandTracker
-from robot_communication import RobotCommunication
+from OCP_robot_communication import RobotCommunication
 from shared_state import SharedState
 import threading
 from time import sleep
