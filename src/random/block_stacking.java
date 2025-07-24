@@ -232,7 +232,7 @@ public class FYP_HRC_2025 extends RoboticsAPIApplication {
 	// block placing
 	@Override
 	public void run() {
-	    // Move to home position with red light
+	    // Move to home position with r2wed light
 //		logger.info(Double.toString(getApplicationData().getFrame("/Alt_Start").getGammaRad()));
 		gripper2F1.close();
 		
