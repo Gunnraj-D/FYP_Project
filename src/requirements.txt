@@ -1,0 +1,9 @@
+opencv-python==4.12.0.88
+mediapipe==0.10.14
+pyrealsense2==2.55.1.6486
+jpype1==1.5.2
+llvmlite==0.44.0
+numba
+numpy
+packaging
+scipy
