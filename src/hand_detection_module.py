@@ -8,11 +8,11 @@ from mediapipe.framework.formats import landmark_pb2
 import numpy as np
 import time
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional, Tuple
 import logging
 import threading
 from shared_state_joints import SharedState
-from config import HANDMODEL_FILEPATH
+from config import HANDMODEL_FILEPATH, MIN_HAND_CONFIDENCE, MAX_HAND_DISTANCE, MIN_HAND_DISTANCE
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,9 +23,11 @@ class Config:
     """Simple configuration class"""
     model_path: str = HANDMODEL_FILEPATH
     max_hands: int = 1
-    min_confidence: float = 0.5
+    min_confidence: float = MIN_HAND_CONFIDENCE
     palm_indices: List[int] = None
     palm_flatness_threshold: float = 0.15
+    max_tracking_distance: float = MAX_HAND_DISTANCE
+    min_tracking_distance: float = MIN_HAND_DISTANCE
 
     def __post_init__(self):
         if self.palm_indices is None:
@@ -47,13 +49,20 @@ class HandTracker:
         # Detection state
         self.latest_result = None
         self.latest_timestamp = 0
+        self.detection_history = []
+        self.max_history_length = 10
 
         # Visualization
         self.mp_drawing = solutions.drawing_utils
         self.mp_hands = solutions.hands
 
+        # Performance tracking
+        self.frame_count = 0
+        self.detection_count = 0
+        self.last_performance_log = time.time()
+
     def _setup_camera(self):
-        """Setup RealSense camera"""
+        """Setup RealSense camera with error handling"""
         try:
             self.pipeline = rs.pipeline()
             cfg = rs.config()
@@ -65,13 +74,13 @@ class HandTracker:
             self.intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
             self.align = rs.align(rs.stream.color)
 
-            logger.info("Camera initialized")
+            logger.info("Camera initialized successfully")
         except Exception as e:
             logger.error(f"Camera setup failed: {e}")
             raise
 
     def _setup_detector(self):
-        """Setup MediaPipe hand detector"""
+        """Setup MediaPipe hand detector with error handling"""
         try:
             base_options = python.BaseOptions(
                 model_asset_path=self.config.model_path)
@@ -87,18 +96,159 @@ class HandTracker:
 
             self.landmarker = vision.HandLandmarker.create_from_options(
                 options)
-            logger.info("Detector initialized")
+            logger.info("Hand detector initialized successfully")
         except Exception as e:
-            logger.error(f"Detector setup failed: {e}")
+            logger.error(f"Hand detector setup failed: {e}")
             raise
 
     def _detection_callback(self, result, output_image, timestamp_ms):
-        """Callback for hand detection results"""
-        self.latest_result = result
-        self.latest_timestamp = timestamp_ms
+        """Callback for hand detection results with validation"""
+        try:
+            if result and hasattr(result, 'hand_landmarks') and result.hand_landmarks:
+                self.latest_result = result
+                self.latest_timestamp = timestamp_ms
+                self.detection_count += 1
+
+                # Process the detection
+                self._process_detection_result(result)
+            else:
+                # No hand detected
+                self._handle_no_detection()
+
+        except Exception as e:
+            logger.error(f"Error in detection callback: {e}")
+            self._handle_no_detection()
+
+    def _process_detection_result(self, result):
+        """Process and validate detection result"""
+        try:
+            if not result.hand_landmarks:
+                self._handle_no_detection()
+                return
+
+            # Get the first detected hand
+            hand_landmarks = result.hand_landmarks[0]
+
+            # Calculate confidence based on landmark quality
+            confidence = self._calculate_detection_confidence(hand_landmarks)
+
+            # Validate confidence threshold
+            if confidence < self.config.min_confidence:
+                logger.debug(
+                    f"Hand detection confidence too low: {confidence:.3f}")
+                self._handle_no_detection()
+                return
+
+            # Calculate palm centroid and radius
+            palm_centroid, radius = self._calculate_palm_centroid(
+                hand_landmarks)
+            if palm_centroid is None:
+                logger.debug("Palm centroid calculation failed")
+                self._handle_no_detection()
+                return
+
+            # Get depth at palm position
+            depth = self._get_depth_at_point(
+                self.latest_depth_frame, palm_centroid, radius)
+            if depth <= 0:
+                logger.debug("Invalid depth value")
+                self._handle_no_detection()
+                return
+
+            # Convert to 3D coordinates
+            vector_3d = self._pixel_to_3d(
+                palm_centroid[0], palm_centroid[1], depth)
+
+            # Validate 3D vector
+            if not self._validate_3d_vector(vector_3d):
+                logger.debug(f"Invalid 3D vector: {vector_3d}")
+                self._handle_no_detection()
+                return
+
+            # Update shared state with confidence
+            self.shared_vector.update_camera_vector(vector_3d, confidence)
+            self.shared_vector.update_radius(radius)
+
+            # Add to detection history
+            self._add_to_history(vector_3d, confidence, time.time())
+
+        except Exception as e:
+            logger.error(f"Error processing detection result: {e}")
+            self._handle_no_detection()
+
+    def _calculate_detection_confidence(self, landmarks) -> float:
+        """Calculate confidence based on landmark quality and stability"""
+        try:
+            # Check landmark visibility
+            visible_landmarks = sum(
+                1 for lm in landmarks if lm.visibility > 0.5)
+            visibility_score = visible_landmarks / len(landmarks)
+
+            # Check landmark presence confidence
+            presence_score = getattr(
+                self.latest_result, 'hand_presence_confidence', [0.5])[0]
+
+            # Check tracking confidence
+            tracking_score = getattr(
+                self.latest_result, 'hand_tracking_confidence', [0.5])[0]
+
+            # Combine scores
+            confidence = (visibility_score + presence_score +
+                          tracking_score) / 3.0
+
+            return min(confidence, 1.0)
+
+        except Exception as e:
+            logger.error(f"Error calculating confidence: {e}")
+            return 0.0
+
+    def _validate_3d_vector(self, vector_3d: Tuple[float, float, float]) -> bool:
+        """Validate 3D vector values"""
+        try:
+            if len(vector_3d) != 3:
+                return False
+
+            x, y, z = vector_3d
+
+            # Check for NaN or infinite values
+            if any(not np.isfinite(val) for val in [x, y, z]):
+                return False
+
+            # Check distance limits
+            distance = np.sqrt(x**2 + y**2 + z**2)
+            if distance < self.config.min_tracking_distance or distance > self.config.max_tracking_distance:
+                return False
+
+            # Check reasonable bounds (in mm)
+            if abs(x) > 5000 or abs(y) > 5000 or abs(z) > 5000:
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error validating 3D vector: {e}")
+            return False
+
+    def _handle_no_detection(self):
+        """Handle case when no hand is detected"""
+        # Reset camera vector to indicate no detection
+        self.shared_vector.update_camera_vector([0, 0, 0], 0.0)
+        self.shared_vector.update_radius(0)
+
+    def _add_to_history(self, vector_3d: Tuple[float, float, float], confidence: float, timestamp: float):
+        """Add detection to history for stability analysis"""
+        self.detection_history.append({
+            'vector': vector_3d,
+            'confidence': confidence,
+            'timestamp': timestamp
+        })
+
+        # Keep only recent detections
+        if len(self.detection_history) > self.max_history_length:
+            self.detection_history.pop(0)
 
     def _get_frames(self):
-        """Get aligned color and depth frames"""
+        """Get aligned color and depth frames with error handling"""
         try:
             frames = self.pipeline.wait_for_frames()
             aligned_frames = self.align.process(frames)
@@ -107,15 +257,20 @@ class HandTracker:
             color_frame = aligned_frames.get_color_frame()
 
             if not depth_frame or not color_frame:
+                logger.warning("Failed to get valid frames")
                 return None, None
 
+            # Store depth frame for later use
+            self.latest_depth_frame = depth_frame
+
             return np.asanyarray(color_frame.get_data()), depth_frame
+
         except Exception as e:
             logger.error(f"Frame capture error: {e}")
             return None, None
 
     def _calculate_palm_centroid(self, landmarks):
-        """Calculate palm centroid and radius"""
+        """Calculate palm centroid and radius with improved validation"""
         try:
             data = np.array([[landmarks[i].x, landmarks[i].y, landmarks[i].z]
                              for i in self.config.palm_indices])
@@ -126,214 +281,161 @@ class HandTracker:
             # Check if hand is flat enough
             _, singular_values, _ = np.linalg.svd(recentered)
             if np.min(singular_values) > self.config.palm_flatness_threshold:
+                logger.debug("Hand not flat enough for palm detection")
                 return None, None
 
             distances = np.linalg.norm(recentered, axis=1)
             radius = np.min(distances)
 
+            # Validate radius
+            if radius <= 0 or not np.isfinite(radius):
+                logger.debug(f"Invalid radius calculated: {radius}")
+                return None, None
+
             return centroid, radius
+
         except Exception as e:
             logger.error(f"Palm calculation error: {e}")
             return None, None
 
     def _get_depth_at_point(self, depth_frame, center, radius):
-        """Get average depth in circular region"""
+        """Get average depth in circular region with validation"""
         try:
             h, w = depth_frame.get_height(), depth_frame.get_width()
-            cx, cy = center
+            cx, cy = int(center[0]), int(center[1])
 
             if cx < 0 or cx >= w or cy < 0 or cy >= h:
+                logger.debug(
+                    f"Center point outside frame bounds: ({cx}, {cy})")
                 return 0.0
 
             # Create circular mask
             mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.circle(mask, (cx, cy), radius, 255, -1)
+            cv2.circle(mask, (cx, cy), int(radius), 255, -1)
 
             depth_image = np.asanyarray(depth_frame.get_data())
             valid_depths = depth_image[mask == 255]
             valid_depths = valid_depths[valid_depths > 0]
 
             if valid_depths.size == 0:
+                logger.debug("No valid depth values in region")
                 return 0.0
 
-            return np.mean(valid_depths) * depth_frame.get_units()
+            depth_value = np.mean(valid_depths) * depth_frame.get_units()
+
+            # Validate depth value
+            if depth_value <= 0 or not np.isfinite(depth_value):
+                logger.debug(f"Invalid depth value: {depth_value}")
+                return 0.0
+
+            return depth_value
+
         except Exception as e:
             logger.error(f"Depth calculation error: {e}")
             return 0.0
 
     def _pixel_to_3d(self, x, y, depth):
-        """Convert pixel coordinates to 3D vector"""
+        """Convert pixel coordinates to 3D vector with validation"""
         try:
             if depth <= 0:
                 return [0.0, 0.0, 0.0]
+
             point_3d = rs.rs2_deproject_pixel_to_point(
                 self.intrinsics, [x, y], depth)
-            
-            # currenlty in m, need in mm
-            return (point_3d[0] * 1000, point_3d[1] * 1000, point_3d[2] * 1000)
+
+            # Convert from meters to millimeters
+            vector_3d = (point_3d[0] * 1000, point_3d[1]
+                         * 1000, point_3d[2] * 1000)
+
+            # Validate the result
+            if not all(np.isfinite(val) for val in vector_3d):
+                logger.debug(f"Non-finite 3D point: {vector_3d}")
+                return [0.0, 0.0, 0.0]
+
+            return vector_3d
+
         except Exception as e:
             logger.error(f"3D conversion error: {e}")
-            return (0.0, 0.0, 0.0)
+            return [0.0, 0.0, 0.0]
 
-    def _draw_results(self, frame, landmarks, palm_pos, depth, vector_3d):
-        """Draw all visualization elements"""
-        h, w = frame.shape[:2]
+    def _log_performance_metrics(self):
+        """Log performance metrics periodically"""
+        current_time = time.time()
+        if current_time - self.last_performance_log > 10.0:  # Log every 10 seconds
+            fps = self.frame_count / (current_time - self.last_performance_log)
+            detection_rate = self.detection_count / max(self.frame_count, 1)
 
-        # Draw hand landmarks
-        if landmarks:
-            for hand_landmarks in landmarks:
-                # Create flipped landmarks for display
-                flipped_landmarks = landmark_pb2.NormalizedLandmarkList()
-                flipped_landmarks.landmark.extend([
-                    landmark_pb2.NormalizedLandmark(x=1.0-lm.x, y=lm.y, z=lm.z)
-                    for lm in hand_landmarks
-                ])
+            logger.info(
+                f"Performance: FPS={fps:.1f}, Detection Rate={detection_rate:.2%}")
 
-                self.mp_drawing.draw_landmarks(
-                    frame, flipped_landmarks, self.mp_hands.HAND_CONNECTIONS,
-                    self.mp_drawing.DrawingSpec(
-                        color=(0, 255, 0), thickness=2, circle_radius=2),
-                    self.mp_drawing.DrawingSpec(
-                        color=(0, 0, 255), thickness=2, circle_radius=2)
-                )
-
-        # Draw palm info
-        if palm_pos and depth > 0:
-            palm_x, palm_y, radius = palm_pos
-            flipped_x = w - palm_x
-
-            cv2.circle(frame, (flipped_x, palm_y), radius, (255, 255, 0), 2)
-            cv2.putText(frame, f"Depth: {depth:.2f}m", (10, 70),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-            cv2.putText(frame, f"3D: ({vector_3d[0]:.2f}, {vector_3d[1]:.2f}, {vector_3d[2]:.2f})",
-                        (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+            self.frame_count = 0
+            self.detection_count = 0
+            self.last_performance_log = current_time
 
     def start(self):
-        if self.is_running:
-            logger.warning("Hand Tracker is already running...")
-            return
-
-        logger.info("Starting HandTracker...")
+        """Start hand tracking with error handling"""
         try:
-            self.is_running = True
+            logger.info("Starting hand tracking...")
 
-            self.processing_thread = threading.Thread(
-                target=self.main_loop)
-            self.processing_thread.start()
-            logger.info(
-                "HandTracker started successfully in a background thread.")
+            self._setup_camera()
+            self._setup_detector()
+
+            self.is_running = True
+            self.tracking_thread = threading.Thread(
+                target=self._tracking_loop, daemon=True)
+            self.tracking_thread.start()
+
+            logger.info("Hand tracking started successfully")
+
         except Exception as e:
-            logger.error(f"Failed to start HandTracker: {e}")
-            self._cleanup()  # Ensure cleanup if setup fails
+            logger.error(f"Failed to start hand tracking: {e}")
             self.is_running = False
             raise
 
     def stop(self):
-        """Signals the tracking loop to stop and cleans up resources."""
-        if not self.is_running:
-            logger.warning("Tracker is not running.")
-            return
-
-        logger.info("Stopping HandTracker...")
+        """Stop hand tracking safely"""
+        logger.info("Stopping hand tracking...")
         self.is_running = False
-        if self.processing_thread:
-            self.processing_thread.join() # Wait for the thread to finish
-        self._cleanup()
-        logger.info("HandTracker stopped.")
 
-    def main_loop(self):
-        """Main execution loop"""
-        self._setup_camera()
-        self._setup_detector()
-        prev_time = time.time()
+        if hasattr(self, 'tracking_thread') and self.tracking_thread.is_alive():
+            self.tracking_thread.join(timeout=2.0)
 
-        while self.is_running:
-            # Get frames
-            color_frame, depth_frame = self._get_frames()
-            if color_frame is None or depth_frame is None:
-                continue
-
-            # Process with MediaPipe
-            rgb_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(
-                image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            timestamp_ms = int(time.time() * 1000)
-
-            self.landmarker.detect_async(mp_image, timestamp_ms)
-
-            # Process results
-            palm_pos = None
-            depth = 0
-            vector_3d = [0.0, 0.0, 0.0]
-
-            if (self.latest_result and
-                self.latest_result.hand_landmarks and
-                    len(self.latest_result.hand_landmarks) > 0):
-
-                landmarks = self.latest_result.hand_landmarks[0]
-                centroid, radius = self._calculate_palm_centroid(landmarks)
-
-                if centroid is not None:
-                    h, w = color_frame.shape[:2]
-                    palm_x = int(centroid[0] * w)
-                    palm_y = int(centroid[1] * h)
-                    pixel_radius = int(radius * min(w, h))
-
-                    depth = self._get_depth_at_point(
-                        depth_frame, (palm_x, palm_y), pixel_radius)
-
-                    if depth > 0:
-                        vector_3d = self._pixel_to_3d(
-                            palm_x, palm_y, depth)
-                        self.shared_vector.update_camera_vector(vector_3d)
-                        radius_vector = self._pixel_to_3d(
-                            palm_x - pixel_radius, palm_y, depth)
-                        actual_radius = vector_3d[0] - radius_vector[0]
-                        self.shared_vector.update_radius(actual_radius)
-                        palm_pos = (palm_x, palm_y, pixel_radius)
-            else:
-                self.shared_vector.update_camera_vector(vector_3d)
-
-
-            # Create display frame
-            display_frame = cv2.flip(color_frame, 1)
-
-            # Draw everything
-            landmarks = self.latest_result.hand_landmarks if self.latest_result else None
-            self._draw_results(display_frame, landmarks,
-                                palm_pos, depth, vector_3d)
-
-            # FPS
-            current_time = time.time()
-            fps = int(1.0 / (current_time - prev_time))
-            prev_time = current_time
-            cv2.putText(display_frame, f"FPS: {fps}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-            # Display
-            cv2.imshow('Hand Tracking', display_frame)
-
-            cv2.waitKey(1)
-
-    def _cleanup(self):
-        """Clean up resources"""
-        if self.landmarker:
-            self.landmarker.close()
         if self.pipeline:
-            self.pipeline.stop()
-        cv2.destroyAllWindows()
-        logger.info("Cleanup complete")
+            try:
+                self.pipeline.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping pipeline: {e}")
 
-if __name__ == "__main__":
-    vector = SharedState()
-    handtrack = HandTracker(vector)
-    handtrack.start()
-    try:
-        print("System running. Press Ctrl+C to stop.")
-        while True:
-            time.sleep(1)
+        logger.info("Hand tracking stopped")
 
-    except KeyboardInterrupt:
-        print("\nStopping system...")
-        handtrack.stop()
-        print("System stopped.")
+    def _tracking_loop(self):
+        """Main tracking loop with error handling"""
+        while self.is_running:
+            try:
+                self.frame_count += 1
+
+                # Get frames
+                color_frame, depth_frame = self._get_frames()
+                if color_frame is None or depth_frame is None:
+                    time.sleep(0.01)
+                    continue
+
+                # Process frame with MediaPipe
+                if self.landmarker:
+                    # Convert BGR to RGB for MediaPipe
+                    rgb_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2RGB)
+                    # Create MediaPipe image
+                    mp_image = mp.Image(
+                        image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+                    self.landmarker.detect_async(
+                        mp_image, int(time.time() * 1000))
+
+                # Log performance metrics
+                self._log_performance_metrics()
+
+                # Small delay to prevent excessive CPU usage
+                time.sleep(0.01)
+
+            except Exception as e:
+                logger.error(f"Error in tracking loop: {e}")
+                time.sleep(0.1)  # Longer delay on error

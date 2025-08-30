@@ -1,3 +1,4 @@
+# Core dependencies with version pinning for stability
 opencv-python==4.12.0.88
 mediapipe==0.10.14
 pyrealsense2==2.55.1.6486
@@ -5,7 +6,25 @@ jpype1==1.5.2
 llvmlite==0.44.0
 asyncua
 numba
-numpy
+numpy>=1.21.0,<2.0.0
 packaging
-scipy
-ikpy
+scipy>=1.7.0,<2.0.0
+ikpy>=0.6.0,<1.0.0
+
+# Additional safety and monitoring packages
+psutil>=5.8.0,<6.0.0  # System monitoring
+watchdog>=2.1.0,<3.0.0  # File system monitoring
+colorlog>=6.6.0,<7.0.0  # Colored logging
+python-json-logger>=2.0.0,<3.0.0  # JSON logging
+structlog>=21.5.0,<22.0.0  # Structured logging
+
+# Development and testing packages (optional)
+pytest>=6.0.0,<7.0.0  # Testing framework
+pytest-cov>=2.12.0,<3.0.0  # Coverage testing
+black>=21.0.0,<22.0.0  # Code formatting
+flake8>=3.9.0,<4.0.0  # Linting
+mypy>=0.910,<1.0.0  # Type checking
+
+# Performance and optimization
+numba>=0.56.0,<1.0.0  # JIT compilation
+cython>=0.29.0,<1.0.0  # C extensions
