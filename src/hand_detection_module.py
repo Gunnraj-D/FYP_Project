@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from typing import List
 import logging
 import threading
-from shared_state import SharedState
+from shared_state_joints import SharedState
+from config import HANDMODEL_FILEPATH
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Config:
     """Simple configuration class"""
-    model_path: str = r"C:\Users\Raj\Documents\Year 4\FYP\FYP_Project\models\hand_landmarker.task"
+    model_path: str = HANDMODEL_FILEPATH
     max_hands: int = 1
     min_confidence: float = 0.5
     palm_indices: List[int] = None
@@ -224,6 +225,7 @@ class HandTracker:
         except Exception as e:
             logger.error(f"Failed to start HandTracker: {e}")
             self._cleanup()  # Ensure cleanup if setup fails
+            self.is_running = False
             raise
 
     def stop(self):
@@ -283,14 +285,14 @@ class HandTracker:
                     if depth > 0:
                         vector_3d = self._pixel_to_3d(
                             palm_x, palm_y, depth)
-                        self.shared_vector.update_vector(vector_3d)
+                        self.shared_vector.update_camera_vector(vector_3d)
                         radius_vector = self._pixel_to_3d(
                             palm_x - pixel_radius, palm_y, depth)
                         actual_radius = vector_3d[0] - radius_vector[0]
                         self.shared_vector.update_radius(actual_radius)
                         palm_pos = (palm_x, palm_y, pixel_radius)
             else:
-                self.shared_vector.update_vector(vector_3d)
+                self.shared_vector.update_camera_vector(vector_3d)
 
 
             # Create display frame

@@ -33,7 +33,7 @@ class LBRJadeClientThread(threading.Thread):
             current_time = time.time()
             if current_time - start_time > 1.0:
                 step_rate = steps / (current_time - start_time)
-                print("Step rate: %.2f steps/s" % step_rate)
+                # print("Step rate: %.2f steps/s" % step_rate)
                 start_time = current_time
                 steps = 0
         self.stop()

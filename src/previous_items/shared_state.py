@@ -7,7 +7,7 @@ class SharedState:
         self.radius = 0
         self.z_tolerance = 20
 
-    def update_vector(self, vector):
+    def update_camera_vector(self, vector):
         z_comp = vector[2]
         # print(z_comp)
         if z_comp != 0:

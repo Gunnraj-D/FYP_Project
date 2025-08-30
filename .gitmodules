@@ -1,0 +1,3 @@
+[submodule "src/KukaFRIPython"]
+	path = src/KukaFRIPython
+	url = https://github.com/WhileTrueBreak/KukaFRIPython.git

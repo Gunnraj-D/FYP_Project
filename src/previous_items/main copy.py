@@ -14,7 +14,7 @@ def main():
     hand_tracker = HandTracker(shared_state)
     robot = KukaFRIInterface(FRI_IP, FRI_PORT)
     # robot = RealisticMockKukaFRI()
-    kinematics_solver = InverseKinematicsSolver(
+    ik_solver = InverseKinematicsSolver(
         URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS)
 
     hand_tracker.start()
@@ -34,18 +34,18 @@ def main():
             if camera_vector == [0.0, 0.0, 0.0]:
                 continue
 
+            tcp_pose = robot.get_cartesian_pose()
             current_joint_angles = robot.get_joint_positions()
+
+            hand_location_in_base = transform_camera_to_base(
+                camera_vector, pose_to_homogeneous(tcp_pose))
+            
             current_joint_angles = np.insert(current_joint_angles, 0, 0.0)
             current_joint_angles = np.append(current_joint_angles, 0.0)
 
-            tcp_pose = kinematics_solver.solve_tcp(current_joint_angles)
-
-            hand_location_in_base = transform_camera_to_base(
-                camera_vector, tcp_pose)
-
-            target_joints = kinematics_solver.solve_XYZ(
+            target_joints = ik_solver.solve_XYZ(
                 hand_location_in_base, current_joint_angles)
-
+            
             target_joints = target_joints[1:8]
 
             robot.set_joint_positions(target_joints)

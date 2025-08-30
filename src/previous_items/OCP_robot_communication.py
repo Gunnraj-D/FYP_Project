@@ -31,38 +31,23 @@ class RobotCommunication:
 
             r2c_start_node = await robot2.get_child("R2c_Start")
             r2c_prog_id_node = await robot2.get_child("R2c_ProgID")
-            r2c_posx_node = await robot2.get_child("R2c_PosX")
+            r2c_posx_node = await robot2.get_child("R2c_Joi1")
             r2c_posy_node = await robot2.get_child("R2c_PosY")
             r2c_posz_node = await robot2.get_child("R2c_PosZ")
 
             program_id = ua.Variant(1, ua.VariantType.Int32)
             start = ua.Variant(True, ua.VariantType.Boolean)
 
-            # previous_vector = None
-
             while self.running:
 
                 current_vector = self.shared_vector.vector
 
-                # logger.info(f"Current vector: {current_vector}")
-
-                # if the 
-
-                # robot_running = await r2c_start_node.read_value()
-
-                # logger.info(f"Vector: {current_vector}")
-                # logger.info(f"Robot Running?: {robot_running}")
-
-                # if current_vector != previous_vector and not robot_running:
-                # if current_vector != previous_vector:
                 await r2c_posx_node.write_value(-current_vector[0])
                 await r2c_posy_node.write_value(-current_vector[1])   
                 await r2c_posz_node.write_value(current_vector[2])
 
                 await r2c_prog_id_node.write_value(program_id)
                 await r2c_start_node.write_value(start)
-
-                    # previous_vector = current_vector
 
                 await asyncio.sleep(self.update_interval)
 
@@ -71,3 +56,9 @@ class RobotCommunication:
 
             await r2c_prog_id_node.write_value(program_id)
             await r2c_start_node.write_value(start)
+
+if __name__ == "__main__":
+    st = SharedState()
+    rc = RobotCommunication(st)
+
+    rc.start()
