@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import List
 import logging
 import threading
-from shared_state_joints import SharedState
+from shared_state import SharedState
 from config import HANDMODEL_FILEPATH
 
 logging.basicConfig(level=logging.INFO)
