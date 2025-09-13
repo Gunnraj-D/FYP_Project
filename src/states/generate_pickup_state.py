@@ -39,10 +39,12 @@ class GeneratePickupState(BaseState):
         self.max_attempts = GRASP_EXECUTION_CONFIG['retry_attempts']
         self.state_start_time = 0.0
         self.best_grasp_result: Optional[Dict] = None
-        self.grasp_generation_timeout = 10.0  # seconds
+        self.grasp_generation_timeout = GRASP_EXECUTION_CONFIG.get(
+            'grasp_generation_timeout', 10.0)
         self.min_grasp_quality = GRASP_DETECTION_CONFIG['min_quality_threshold']
         self.last_frame_time = 0.0
-        self.frame_processing_interval = 0.5  # Process frames every 500ms
+        self.frame_processing_interval = GRASP_DETECTION_CONFIG.get(
+            'frame_processing_interval', 0.5)
 
     def enter(self):
         """Initialize GGCNN2 module and reset state variables."""
@@ -217,8 +219,32 @@ class GeneratePickupState(BaseState):
             self.context.telemetry.update_pickup_pose_joints(joint_angles)
 
             # Store additional grasp information in telemetry
-            # (You may want to extend telemetry to store more grasp data)
-            logger.info(f"Best grasp pose stored in telemetry: {joint_angles}")
+            grasp_height = grasp_result.get('grasp_height', 0.0)
+            self.context.telemetry.update_grasp_height(grasp_height)
+
+            # Calculate and store grasp pose and approach pose
+            grasp_pose_base = grasp_result.get('grasp_pose_base', [0.0] * 6)
+            self.context.telemetry.set_generated_grasp_pose(grasp_pose_base)
+
+            # Calculate approach pose (grasp pose + vertical offset)
+            # Convert mm to meters
+            approach_height_offset = GRASP_DETECTION_CONFIG['approach_height_offset'] / 1000.0
+            approach_pose = grasp_pose_base.copy()
+            # Add height offset to Z coordinate
+            approach_pose[2] += approach_height_offset
+            self.context.telemetry.set_generated_approach_pose(approach_pose)
+
+            # Store pickup height offset (vertical distance between grasp and approach)
+            self.context.telemetry.set_pickup_height_offset(
+                approach_height_offset)
+
+            logger.info(f"Best grasp pose stored in telemetry:")
+            logger.info(f"  Joint angles: {joint_angles}")
+            logger.info(f"  Grasp pose: {grasp_pose_base}")
+            logger.info(f"  Approach pose: {approach_pose}")
+            logger.info(f"  Height above table: {grasp_height:.3f}m")
+            logger.info(
+                f"  Pickup height offset: {approach_height_offset:.3f}m")
 
         except Exception as e:
             logger.error(f"Failed to store grasp result in telemetry: {e}")
@@ -289,6 +315,12 @@ class GeneratePickupState(BaseState):
         if self.best_grasp_result:
             return self.best_grasp_result.get('grasp_pose_base')
         return None
+
+    def get_grasp_height(self) -> float:
+        """Get the height above table for the best generated grasp."""
+        if self.best_grasp_result:
+            return self.best_grasp_result.get('grasp_height', 0.0)
+        return 0.0
 
     def get_generation_stats(self) -> Dict:
         """Get statistics about the grasp generation process."""

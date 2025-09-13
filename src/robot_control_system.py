@@ -76,9 +76,6 @@ class RobotControlSystem:
         # Control flags
         self.running = False
 
-        # OPC client now handles telemetry updates directly
-        # No need for callbacks as telemetry is updated in the dedicated loop
-
     def start(self):
         """Start all system components."""
         logger.info("Starting Robot Hand Tracking System...")

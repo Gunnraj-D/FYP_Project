@@ -11,6 +11,7 @@ from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager
 from camera_management.camera_transform_module import transform_camera_to_base
+from camera_management.table_reference import TableReferenceModule, TableReferenceConfig
 from kinematics.kinematics_solver import InverseKinematicsSolver
 from object_detection.ggcnn2 import GGCNN2
 from config.config import GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG
@@ -45,6 +46,10 @@ class GGcnn2Module:
         state_dict = torch.load(model_path, map_location=self.device)
         self.model.load_state_dict(state_dict)
         self.model.to(self.device).eval()
+
+        # Initialize table reference module
+        table_config = TableReferenceConfig()
+        self.table_reference = TableReferenceModule(table_config)
 
         logger.info(f"GGCNN2 model loaded from {model_path} on {self.device}")
 
@@ -120,20 +125,28 @@ class GGcnn2Module:
                 logger.warning("Failed to convert grasp pose to joint angles")
                 return None
 
+            # Update table reference with current depth frame
+            self.table_reference.update_table_reference(depth_image)
+
+            # Compute height above table for the grasp
+            grasp_height = self._compute_grasp_height(depth_image, grasp_2d)
+
             # Create complete grasp result
             grasp_result = {
                 'grasp_2d': grasp_2d,
                 'grasp_pose_camera': grasp_pose_camera,
                 'grasp_pose_base': grasp_pose_base,
                 'joint_angles': joint_angles.tolist(),
-                'quality': grasp_2d.get('quality', 0.0)
+                'quality': grasp_2d.get('quality', 0.0),
+                'grasp_height': grasp_height
             }
 
             # Store in telemetry
             self._store_grasp_result(grasp_result)
 
             logger.info(
-                f"Valid grasp found with quality: {grasp_result['quality']:.3f}")
+                f"Valid grasp found with quality: {grasp_result['quality']:.3f}, "
+                f"height: {grasp_height:.3f}m")
             return grasp_result
 
         except Exception as e:
@@ -279,6 +292,52 @@ class GGcnn2Module:
             logger.error(f"Failed to convert pose to joint angles: {e}")
             return None
 
+    def _compute_grasp_height(self, depth_image: np.ndarray, grasp_2d: Dict) -> float:
+        """
+        Compute height of object above table for the given grasp.
+
+        Args:
+            depth_image: Current depth frame
+            grasp_2d: 2D grasp parameters
+
+        Returns:
+            Height above table in meters
+        """
+        try:
+            # Scale coordinates back to original image size
+            h_orig, w_orig = depth_image.shape
+            scale_u = w_orig / 300.0
+            scale_v = h_orig / 300.0
+
+            center_u, center_v = grasp_2d["center"]
+            width = grasp_2d["width"]
+            angle = grasp_2d["angle"]
+
+            # Scale grasp center to original image coordinates
+            center_u_scaled = int(center_u * scale_u)
+            center_v_scaled = int(center_v * scale_v)
+
+            # Create ROI mask for the grasp rectangle
+            roi_mask = self.table_reference.create_grasp_roi_mask(
+                grasp_center=(center_u_scaled, center_v_scaled),
+                grasp_width=width,
+                grasp_angle=angle,
+                image_shape=(h_orig, w_orig)
+            )
+
+            # Compute height above table using ROI
+            height = self.table_reference.get_height_above_table(
+                depth_frame=depth_image,
+                grasp_uv=(center_u_scaled, center_v_scaled),
+                roi_mask=roi_mask
+            )
+
+            return height
+
+        except Exception as e:
+            logger.error(f"Failed to compute grasp height: {e}")
+            return 0.0
+
     def _store_grasp_result(self, grasp_result: Dict):
         """
         Store grasp result in telemetry and command bus.
@@ -287,12 +346,17 @@ class GGcnn2Module:
             # Store in telemetry (you may need to extend telemetry for grasp data)
             # For now, we'll store the joint angles as target joints
             joint_angles = grasp_result['joint_angles']
+            grasp_height = grasp_result.get('grasp_height', 0.0)
+
+            # Store grasp height in telemetry
+            self.telemetry.update_grasp_height(grasp_height)
 
             # Send joint command to robot
             from control.command_bus import SetJoints
             self.command_bus.send(SetJoints(joints=joint_angles))
 
-            logger.info(f"Grasp command sent: {joint_angles}")
+            logger.info(
+                f"Grasp command sent: {joint_angles}, height: {grasp_height:.3f}m")
 
         except Exception as e:
             logger.error(f"Failed to store grasp result: {e}")
@@ -322,3 +386,25 @@ class GGcnn2Module:
         except Exception as e:
             logger.error(f"Failed to process depth frame: {e}")
             return None
+
+    def cleanup(self):
+        """Clean up resources and free memory."""
+        try:
+            if hasattr(self, 'model'):
+                del self.model
+            if hasattr(self, 'table_reference'):
+                self.table_reference.reset()
+                del self.table_reference
+            logger.info("GGCNN2 module cleaned up")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
+    def get_table_reference_stats(self) -> Dict:
+        """Get statistics about the table reference module."""
+        try:
+            if hasattr(self, 'table_reference'):
+                return self.table_reference.get_stats()
+            return {}
+        except Exception as e:
+            logger.error(f"Failed to get table reference stats: {e}")
+            return {}

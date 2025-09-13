@@ -14,6 +14,7 @@ from config.config import HAND_STABILITY_THRESHOLD
 @dataclass
 class _ArmState:
     target_joints: List[float] = field(default_factory=lambda: [0.0] * 7)
+    current_joints: List[float] = field(default_factory=lambda: [0.0] * 7)
 
 
 @dataclass
@@ -25,17 +26,30 @@ class _GripperState:
 @dataclass
 class _HandTrackingState:
     last_update_time: float
-    camera_vector: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])  # in mm
+    camera_vector: List[float] = field(
+        default_factory=lambda: [0.0, 0.0, 0.0])  # in mm
     hand_radius: float = 0.0
     hand_detected: bool = False
     hand_stable_time: float = 0.0
-    last_hand_position: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    last_hand_position: List[float] = field(
+        default_factory=lambda: [0.0, 0.0, 0.0])
 
 
 @dataclass
 class _ObjectPickupState:
     pickup_pose_joints: List[float] = field(default_factory=lambda: [0.0] * 7)
     object_remaining_height: float = 0.0
+    grasp_height: float = 0.0  # Height of object above table in meters
+    generated_grasp_pose: List[float] = field(
+        default_factory=lambda: [0.0] * 6)  # [x, y, z, rx, ry, rz]
+    generated_approach_pose: List[float] = field(
+        default_factory=lambda: [0.0] * 6)  # [x, y, z, rx, ry, rz]
+    # Vertical distance between grasp and approach poses
+    pickup_height_offset: float = 0.0
+    live_hand_pose: List[float] = field(
+        default_factory=lambda: [0.0] * 6)  # [x, y, z, rx, ry, rz]
+    calculated_handoff_pose: List[float] = field(
+        default_factory=lambda: [0.0] * 6)  # [x, y, z, rx, ry, rz]
 
 
 @dataclass
@@ -159,7 +173,7 @@ class Telemetry:
 
     def get_pickup_pose_joints(self) -> List[float]:
         with self._object_pickup_lock:
-            self._object_pickup.pickup_pose_joints
+            return self._object_pickup.pickup_pose_joints
 
     def update_pickup_pose_joints(self, joint_list: List[float]):
         with self._object_pickup_lock:
@@ -176,6 +190,78 @@ class Telemetry:
     def update_object_remaining_height(self, remaining_height: float):
         with self._object_pickup_lock:
             self._object_pickup.object_remaining_height = remaining_height
+
+    def get_grasp_height(self) -> float:
+        """Get the height of object above table for current grasp."""
+        with self._object_pickup_lock:
+            return self._object_pickup.grasp_height
+
+    def update_grasp_height(self, height: float):
+        """Update the height of object above table for current grasp."""
+        with self._object_pickup_lock:
+            self._object_pickup.grasp_height = height
+
+    def get_generated_grasp_pose(self) -> List[float]:
+        """Get the generated grasp pose."""
+        with self._object_pickup_lock:
+            return list(self._object_pickup.generated_grasp_pose)
+
+    def set_generated_grasp_pose(self, pose: List[float]):
+        """Set the generated grasp pose."""
+        if len(pose) != 6:
+            raise ValueError(
+                f"Expected 6 pose values [x,y,z,rx,ry,rz], got {len(pose)}")
+        with self._object_pickup_lock:
+            self._object_pickup.generated_grasp_pose = list(pose)
+
+    def get_generated_approach_pose(self) -> List[float]:
+        """Get the generated approach pose."""
+        with self._object_pickup_lock:
+            return list(self._object_pickup.generated_approach_pose)
+
+    def set_generated_approach_pose(self, pose: List[float]):
+        """Set the generated approach pose."""
+        if len(pose) != 6:
+            raise ValueError(
+                f"Expected 6 pose values [x,y,z,rx,ry,rz], got {len(pose)}")
+        with self._object_pickup_lock:
+            self._object_pickup.generated_approach_pose = list(pose)
+
+    def get_pickup_height_offset(self) -> float:
+        """Get the pickup height offset."""
+        with self._object_pickup_lock:
+            return self._object_pickup.pickup_height_offset
+
+    def set_pickup_height_offset(self, offset: float):
+        """Set the pickup height offset."""
+        with self._object_pickup_lock:
+            self._object_pickup.pickup_height_offset = offset
+
+    def get_live_hand_pose(self) -> List[float]:
+        """Get the live hand pose."""
+        with self._object_pickup_lock:
+            return list(self._object_pickup.live_hand_pose)
+
+    def set_live_hand_pose(self, pose: List[float]):
+        """Set the live hand pose."""
+        if len(pose) != 6:
+            raise ValueError(
+                f"Expected 6 pose values [x,y,z,rx,ry,rz], got {len(pose)}")
+        with self._object_pickup_lock:
+            self._object_pickup.live_hand_pose = list(pose)
+
+    def get_calculated_handoff_pose(self) -> List[float]:
+        """Get the calculated handoff pose."""
+        with self._object_pickup_lock:
+            return list(self._object_pickup.calculated_handoff_pose)
+
+    def set_calculated_handoff_pose(self, pose: List[float]):
+        """Set the calculated handoff pose."""
+        if len(pose) != 6:
+            raise ValueError(
+                f"Expected 6 pose values [x,y,z,rx,ry,rz], got {len(pose)}")
+        with self._object_pickup_lock:
+            self._object_pickup.calculated_handoff_pose = list(pose)
 
     # === Robot status methods === #
 

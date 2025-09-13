@@ -117,6 +117,14 @@ PICKUP_LOCATION = {
     'approach_direction': np.array([0, 0, -1])
 }
 
+# Approximate pose for the robot to move to before starting object detection
+# [x, y, z, rx, ry, rz] in mm and degrees
+PRE_PICKUP_POSE = [400, 0, 300, 0, 0, -90]
+
+# General pose for the robot to move to before starting hand tracking
+# [x, y, z, rx, ry, rz] in mm and degrees
+HANDOFF_APPROACH_POSE = [500, 200, 350, 0, 0, -90]
+
 PLACE_APPROACH_DISTANCE = 150  # mm
 PLACE_RELEASE_DISTANCE = 50    # mm
 
@@ -144,6 +152,7 @@ GRASP_DETECTION_CONFIG = {
     'vertical_approach': True,         # Use vertical approach angle
     # Approach angle in degrees (vertical = -90)
     'approach_angle': -90.0,
+    'frame_processing_interval': 0.5,  # Process frames every N seconds
 }
 
 # Grasp execution parameters
@@ -154,7 +163,20 @@ GRASP_EXECUTION_CONFIG = {
     'lift_height': 100.0,              # Height to lift after grasp (mm)
     'retry_attempts': 3,               # Number of retry attempts
     'retry_delay': 2.0,                # Delay between retries (seconds)
+    'grasp_generation_timeout': 10.0,  # Timeout for grasp generation (seconds)
 }
+
+# ============================================================================
+# TABLE REFERENCE CONFIGURATION
+# ============================================================================
+
+# Table reference depth model parameters
+TABLE_REF_UPDATE_ALPHA = 0.05         # Exponential moving average update rate
+# Tolerance for table surface detection (meters)
+TABLE_REF_TOLERANCE = 0.01
+TABLE_REF_INITIALIZATION_FRAMES = 5   # Number of frames for initialization
+TABLE_REF_MIN_DEPTH = 0.1             # Minimum valid depth (meters)
+TABLE_REF_MAX_DEPTH = 3.0             # Maximum valid depth (meters)
 
 # ============================================================================
 # SAFETY CONFIGURATION

@@ -1,95 +1,188 @@
 """
-Camera coordinate transformation module.
-Transforms hand positions from camera frame to robot base frame.
+Camera Transform Module - Coordinate frame transformations.
+Handles transformations between camera frame and robot base frame.
 """
 import numpy as np
-from scipy.spatial.transform import Rotation as R
-from typing import List
-from config.config import CAMERA_TRANSLATION, CAMERA_ROTATION_EULER, DISTANCE_TO_REMAIN_MM
+from typing import List, Tuple
+import logging
+
+from config.config import CAMERA_TRANSLATION, CAMERA_ROTATION_EULER
+
+logger = logging.getLogger(__name__)
 
 
-def build_camera_in_tcp() -> np.ndarray:
+def transform_camera_to_base(camera_position: List[float], tcp_matrix: np.ndarray) -> np.ndarray:
     """
-    Build 4x4 homogeneous transformation matrix for camera in TCP frame
-    from static parameters in config.
+    Transform position from camera frame to robot base frame.
+
+    Args:
+        camera_position: [x, y, z] position in camera frame (mm)
+        tcp_matrix: 4x4 homogeneous transformation matrix from base to TCP
+
+    Returns:
+        Position in robot base frame (mm)
     """
-    rotation = R.from_euler(
-        'xyz',
-        [CAMERA_ROTATION_EULER['roll'],
-         CAMERA_ROTATION_EULER['pitch'],
-         CAMERA_ROTATION_EULER['yaw']],
-        degrees=True
-    ).as_matrix()
-    T = np.eye(4)
-    T[:3, :3] = rotation
-    T[:3, 3] = CAMERA_TRANSLATION * 1000.0  # meters -> mm
-    return T
+    try:
+        # Convert camera position to numpy array
+        camera_pos = np.array(camera_position, dtype=float)
+
+        # Create camera-to-TCP transformation matrix
+        # Camera translation relative to TCP (from config)
+        camera_translation = CAMERA_TRANSLATION * 1000  # Convert meters to mm
+
+        # Camera rotation relative to TCP (from config)
+        camera_rotation_euler = CAMERA_ROTATION_EULER
+        camera_rotation_rad = np.radians([
+            camera_rotation_euler['roll'],
+            camera_rotation_euler['pitch'],
+            camera_rotation_euler['yaw']
+        ])
+
+        # Create rotation matrix from Euler angles (ZYX order)
+        from scipy.spatial.transform import Rotation as R
+        camera_rotation_matrix = R.from_euler(
+            'xyz', camera_rotation_rad).as_matrix()
+
+        # Create camera-to-TCP transformation matrix
+        camera_to_tcp = np.eye(4)
+        camera_to_tcp[:3, :3] = camera_rotation_matrix
+        camera_to_tcp[:3, 3] = camera_translation
+
+        # Transform camera position to TCP frame
+        camera_pos_homogeneous = np.append(camera_pos, 1.0)
+        tcp_pos_homogeneous = camera_to_tcp @ camera_pos_homogeneous
+        tcp_pos = tcp_pos_homogeneous[:3]
+
+        # Transform TCP position to base frame
+        base_pos_homogeneous = tcp_matrix @ np.append(tcp_pos, 1.0)
+        base_pos = base_pos_homogeneous[:3]
+
+        logger.debug(
+            f"Camera position {camera_pos} -> Base position {base_pos}")
+        return base_pos
+
+    except Exception as e:
+        logger.error(f"Failed to transform camera to base: {e}")
+        return np.array([0.0, 0.0, 0.0])
 
 
-CAMERA_IN_TCP = build_camera_in_tcp()
-
-
-def pose_to_homogeneous(pose: List[float]) -> np.ndarray:
+def transform_base_to_camera(base_position: List[float], tcp_matrix: np.ndarray) -> np.ndarray:
     """
-    Convert pose to homogeneous transformation matrix.
-    pose: [x, y, z, roll, pitch, yaw] (mm, rad)
+    Transform position from robot base frame to camera frame.
+
+    Args:
+        base_position: [x, y, z] position in base frame (mm)
+        tcp_matrix: 4x4 homogeneous transformation matrix from base to TCP
+
+    Returns:
+        Position in camera frame (mm)
     """
-    if len(pose) != 6:
-        raise ValueError(f"Expected 6 pose values, got {len(pose)}")
-    x, y, z, roll, pitch, yaw = pose
-    rotation_matrix = R.from_euler('xyz', [roll, pitch, yaw]).as_matrix()
-    T = np.eye(4)
-    T[:3, :3] = rotation_matrix
-    T[:3, 3] = [x, y, z]
-    return T
+    try:
+        # Convert base position to numpy array
+        base_pos = np.array(base_position, dtype=float)
+
+        # Transform base position to TCP frame
+        base_pos_homogeneous = np.append(base_pos, 1.0)
+        tcp_pos_homogeneous = np.linalg.inv(tcp_matrix) @ base_pos_homogeneous
+        tcp_pos = tcp_pos_homogeneous[:3]
+
+        # Create TCP-to-camera transformation matrix
+        camera_translation = CAMERA_TRANSLATION * 1000  # Convert meters to mm
+
+        camera_rotation_euler = CAMERA_ROTATION_EULER
+        camera_rotation_rad = np.radians([
+            camera_rotation_euler['roll'],
+            camera_rotation_euler['pitch'],
+            camera_rotation_euler['yaw']
+        ])
+
+        from scipy.spatial.transform import Rotation as R
+        camera_rotation_matrix = R.from_euler(
+            'xyz', camera_rotation_rad).as_matrix()
+
+        # Create TCP-to-camera transformation matrix
+        tcp_to_camera = np.eye(4)
+        # Transpose for inverse rotation
+        tcp_to_camera[:3, :3] = camera_rotation_matrix.T
+        tcp_to_camera[:3, 3] = -camera_rotation_matrix.T @ camera_translation
+
+        # Transform TCP position to camera frame
+        tcp_pos_homogeneous = np.append(tcp_pos, 1.0)
+        camera_pos_homogeneous = tcp_to_camera @ tcp_pos_homogeneous
+        camera_pos = camera_pos_homogeneous[:3]
+
+        logger.debug(
+            f"Base position {base_pos} -> Camera position {camera_pos}")
+        return camera_pos
+
+    except Exception as e:
+        logger.error(f"Failed to transform base to camera: {e}")
+        return np.array([0.0, 0.0, 0.0])
 
 
-def homogeneous_to_pose(T: np.ndarray) -> List[float]:
+def get_camera_intrinsics_matrix(intrinsics) -> np.ndarray:
     """
-    Convert homogeneous transformation matrix to pose.
-    returns [x, y, z, roll, pitch, yaw] (mm, rad)
+    Get camera intrinsics matrix from RealSense intrinsics.
+
+    Args:
+        intrinsics: RealSense intrinsics object
+
+    Returns:
+        3x3 camera intrinsics matrix
     """
-    if T.shape != (4, 4):
-        raise ValueError(f"Expected 4x4 matrix, got {T.shape}")
-    x, y, z = T[:3, 3]
-    rotation_matrix = T[:3, :3]
-    roll, pitch, yaw = R.from_matrix(rotation_matrix).as_euler('xyz')
-    return [x, y, z, roll, pitch, yaw]
+    try:
+        K = np.array([
+            [intrinsics.fx, 0, intrinsics.ppx],
+            [0, intrinsics.fy, intrinsics.ppy],
+            [0, 0, 1]
+        ])
+        return K
+    except Exception as e:
+        logger.error(f"Failed to get camera intrinsics: {e}")
+        return np.eye(3)
 
 
-def transform_camera_to_base(camera_vector: List[float], tcp_pose: np.ndarray) -> np.ndarray:
+def pixel_to_camera_frame(u: int, v: int, depth: float, intrinsics) -> Tuple[float, float, float]:
     """
-    Transform 3D point from camera frame (mm) to base frame (mm).
+    Convert pixel coordinates to camera frame coordinates.
+
+    Args:
+        u, v: Pixel coordinates
+        depth: Depth value in meters
+        intrinsics: Camera intrinsics
+
+    Returns:
+        (x, y, z) coordinates in camera frame (meters)
     """
-    if len(camera_vector) != 3:
-        raise ValueError(
-            f"Expected 3D camera vector, got {len(camera_vector)} values")
-    if tcp_pose.shape != (4, 4):
-        raise ValueError(f"Expected 4x4 TCP pose matrix, got {tcp_pose.shape}")
-    base_T_cam = tcp_pose @ CAMERA_IN_TCP
-    adjusted_camera_vector = [
-        camera_vector[0],
-        camera_vector[1],
-        camera_vector[2] - DISTANCE_TO_REMAIN_MM
-    ]
-    hand_cam = np.array([adjusted_camera_vector[0],
-                        adjusted_camera_vector[1], adjusted_camera_vector[2], 1.0])
-    hand_base = base_T_cam @ hand_cam
-    return hand_base[:3]
+    try:
+        # Convert pixel to camera coordinates
+        x = (u - intrinsics.ppx) * depth / intrinsics.fx
+        y = (v - intrinsics.ppy) * depth / intrinsics.fy
+        z = depth
+
+        return (x, y, z)
+    except Exception as e:
+        logger.error(f"Failed to convert pixel to camera frame: {e}")
+        return (0.0, 0.0, 0.0)
 
 
-def transform_base_to_camera(base_position: List[float], tcp_pose: np.ndarray) -> np.ndarray:
+def camera_frame_to_pixel(x: float, y: float, z: float, intrinsics) -> Tuple[int, int]:
     """
-    Transform 3D point from base frame (mm) to camera frame (mm).
+    Convert camera frame coordinates to pixel coordinates.
+
+    Args:
+        x, y, z: Coordinates in camera frame (meters)
+        intrinsics: Camera intrinsics
+
+    Returns:
+        (u, v) pixel coordinates
     """
-    if len(base_position) != 3:
-        raise ValueError(
-            f"Expected 3D position, got {len(base_position)} values")
-    if tcp_pose.shape != (4, 4):
-        raise ValueError(f"Expected 4x4 TCP pose matrix, got {tcp_pose.shape}")
-    base_T_cam = tcp_pose @ CAMERA_IN_TCP
-    cam_T_base = np.linalg.inv(base_T_cam)
-    pos_base = np.array(
-        [base_position[0], base_position[1], base_position[2], 1.0])
-    pos_cam = cam_T_base @ pos_base
-    return pos_cam[:3]
+    try:
+        # Convert camera coordinates to pixel
+        u = int(x * intrinsics.fx / z + intrinsics.ppx)
+        v = int(y * intrinsics.fy / z + intrinsics.ppy)
+
+        return (u, v)
+    except Exception as e:
+        logger.error(f"Failed to convert camera frame to pixel: {e}")
+        return (0, 0)
