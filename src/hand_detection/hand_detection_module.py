@@ -1,6 +1,9 @@
+"""
+Hand detection module using MediaPipe for robot hand tracking system.
+Refactored to use shared CameraManager for camera operations.
+"""
 import cv2
 import mediapipe as mp
-import pyrealsense2 as rs
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe import solutions
@@ -8,19 +11,22 @@ from mediapipe.framework.formats import landmark_pb2
 import numpy as np
 import time
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 import logging
 import threading
-from shared_state import SharedState
-from config import HANDMODEL_FILEPATH
+
+from control.telemetry_store import Telemetry
+from control.command_bus import CommandBus, Command
+from camera_management.camera_manager import CameraManager
+from config.config import HANDMODEL_FILEPATH
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class Config:
-    """Simple configuration class"""
+class HandTrackingConfig:
+    """Hand tracking configuration parameters."""
     model_path: str = HANDMODEL_FILEPATH
     max_hands: int = 1
     min_confidence: float = 0.5
@@ -33,16 +39,19 @@ class Config:
 
 
 class HandTracker:
-    def __init__(self, shared_vector: SharedState, config: Config = None):
-        self.config = config or Config()
-        self.shared_vector = shared_vector
+    """Hand tracking using MediaPipe with shared camera management."""
+
+    def __init__(self, telemetry: Telemetry, command_bus: CommandBus, camera_manager: CameraManager,
+                 config: HandTrackingConfig = None):
+        
+        self.config = config or HandTrackingConfig()
+        self.telemetry = telemetry
+        self.command_bus = command_bus
+        self.camera_manager = camera_manager
         self.is_running = False
 
-        # Initialize components
-        self.pipeline = None
+        # MediaPipe components
         self.landmarker = None
-        self.intrinsics = None
-        self.align = None
 
         # Detection state
         self.latest_result = None
@@ -52,26 +61,11 @@ class HandTracker:
         self.mp_drawing = solutions.drawing_utils
         self.mp_hands = solutions.hands
 
-    def _setup_camera(self):
-        """Setup RealSense camera"""
-        try:
-            self.pipeline = rs.pipeline()
-            cfg = rs.config()
-            cfg.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-            cfg.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-
-            profile = self.pipeline.start(cfg)
-            color_stream = profile.get_stream(rs.stream.color)
-            self.intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
-            self.align = rs.align(rs.stream.color)
-
-            logger.info("Camera initialized")
-        except Exception as e:
-            logger.error(f"Camera setup failed: {e}")
-            raise
+        # Processing thread
+        self.processing_thread: Optional[threading.Thread] = None
 
     def _setup_detector(self):
-        """Setup MediaPipe hand detector"""
+        """Setup MediaPipe hand detector."""
         try:
             base_options = python.BaseOptions(
                 model_asset_path=self.config.model_path)
@@ -87,35 +81,18 @@ class HandTracker:
 
             self.landmarker = vision.HandLandmarker.create_from_options(
                 options)
-            logger.info("Detector initialized")
+            logger.info("Hand detector initialized")
         except Exception as e:
-            logger.error(f"Detector setup failed: {e}")
+            logger.error(f"Hand detector setup failed: {e}")
             raise
 
     def _detection_callback(self, result, output_image, timestamp_ms):
-        """Callback for hand detection results"""
+        """Callback for hand detection results."""
         self.latest_result = result
         self.latest_timestamp = timestamp_ms
 
-    def _get_frames(self):
-        """Get aligned color and depth frames"""
-        try:
-            frames = self.pipeline.wait_for_frames()
-            aligned_frames = self.align.process(frames)
-
-            depth_frame = aligned_frames.get_depth_frame()
-            color_frame = aligned_frames.get_color_frame()
-
-            if not depth_frame or not color_frame:
-                return None, None
-
-            return np.asanyarray(color_frame.get_data()), depth_frame
-        except Exception as e:
-            logger.error(f"Frame capture error: {e}")
-            return None, None
-
     def _calculate_palm_centroid(self, landmarks):
-        """Calculate palm centroid and radius"""
+        """Calculate palm centroid and radius."""
         try:
             data = np.array([[landmarks[i].x, landmarks[i].y, landmarks[i].z]
                              for i in self.config.palm_indices])
@@ -136,47 +113,8 @@ class HandTracker:
             logger.error(f"Palm calculation error: {e}")
             return None, None
 
-    def _get_depth_at_point(self, depth_frame, center, radius):
-        """Get average depth in circular region"""
-        try:
-            h, w = depth_frame.get_height(), depth_frame.get_width()
-            cx, cy = center
-
-            if cx < 0 or cx >= w or cy < 0 or cy >= h:
-                return 0.0
-
-            # Create circular mask
-            mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.circle(mask, (cx, cy), radius, 255, -1)
-
-            depth_image = np.asanyarray(depth_frame.get_data())
-            valid_depths = depth_image[mask == 255]
-            valid_depths = valid_depths[valid_depths > 0]
-
-            if valid_depths.size == 0:
-                return 0.0
-
-            return np.mean(valid_depths) * depth_frame.get_units()
-        except Exception as e:
-            logger.error(f"Depth calculation error: {e}")
-            return 0.0
-
-    def _pixel_to_3d(self, x, y, depth):
-        """Convert pixel coordinates to 3D vector"""
-        try:
-            if depth <= 0:
-                return [0.0, 0.0, 0.0]
-            point_3d = rs.rs2_deproject_pixel_to_point(
-                self.intrinsics, [x, y], depth)
-            
-            # currenlty in m, need in mm
-            return (point_3d[0] * 1000, point_3d[1] * 1000, point_3d[2] * 1000)
-        except Exception as e:
-            logger.error(f"3D conversion error: {e}")
-            return (0.0, 0.0, 0.0)
-
     def _draw_results(self, frame, landmarks, palm_pos, depth, vector_3d):
-        """Draw all visualization elements"""
+        """Draw all visualization elements."""
         h, w = frame.shape[:2]
 
         # Draw hand landmarks
@@ -209,6 +147,7 @@ class HandTracker:
                         (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
     def start(self):
+        """Start hand tracking in background thread."""
         if self.is_running:
             logger.warning("Hand Tracker is already running...")
             return
@@ -216,40 +155,38 @@ class HandTracker:
         logger.info("Starting HandTracker...")
         try:
             self.is_running = True
+            self._setup_detector()
 
-            self.processing_thread = threading.Thread(
-                target=self.main_loop)
+            self.processing_thread = threading.Thread(target=self.main_loop)
             self.processing_thread.start()
             logger.info(
                 "HandTracker started successfully in a background thread.")
         except Exception as e:
             logger.error(f"Failed to start HandTracker: {e}")
-            self._cleanup()  # Ensure cleanup if setup fails
+            self._cleanup()
             self.is_running = False
             raise
 
     def stop(self):
-        """Signals the tracking loop to stop and cleans up resources."""
+        """Stop hand tracking and cleanup resources."""
         if not self.is_running:
-            logger.warning("Tracker is not running.")
+            logger.warning("Hand Tracker is not running.")
             return
 
         logger.info("Stopping HandTracker...")
         self.is_running = False
         if self.processing_thread:
-            self.processing_thread.join() # Wait for the thread to finish
+            self.processing_thread.join()
         self._cleanup()
         logger.info("HandTracker stopped.")
 
     def main_loop(self):
-        """Main execution loop"""
-        self._setup_camera()
-        self._setup_detector()
+        """Main processing loop for hand tracking."""
         prev_time = time.time()
 
         while self.is_running:
-            # Get frames
-            color_frame, depth_frame = self._get_frames()
+            # Get frames from shared camera manager
+            color_frame, depth_frame = self.camera_manager.get_frames()
             if color_frame is None or depth_frame is None:
                 continue
 
@@ -279,21 +216,23 @@ class HandTracker:
                     palm_y = int(centroid[1] * h)
                     pixel_radius = int(radius * min(w, h))
 
-                    depth = self._get_depth_at_point(
+                    # Use shared camera manager for depth calculation
+                    depth = self.camera_manager.get_average_depth(
                         depth_frame, (palm_x, palm_y), pixel_radius)
 
                     if depth > 0:
-                        vector_3d = self._pixel_to_3d(
+                        # Use shared camera manager for 3D conversion
+                        vector_3d = self.camera_manager.pixel_to_3d(
                             palm_x, palm_y, depth)
-                        self.shared_vector.update_camera_vector(vector_3d)
-                        radius_vector = self._pixel_to_3d(
+                        self.telemetry.update_camera_vector(vector_3d)
+
+                        radius_vector = self.camera_manager.pixel_to_3d(
                             palm_x - pixel_radius, palm_y, depth)
                         actual_radius = vector_3d[0] - radius_vector[0]
-                        self.shared_vector.update_radius(actual_radius)
+                        self.telemetry.update_radius(actual_radius)
                         palm_pos = (palm_x, palm_y, pixel_radius)
             else:
-                self.shared_vector.update_camera_vector(vector_3d)
-
+                self.telemetry.update_camera_vector(vector_3d)
 
             # Create display frame
             display_frame = cv2.flip(color_frame, 1)
@@ -301,7 +240,7 @@ class HandTracker:
             # Draw everything
             landmarks = self.latest_result.hand_landmarks if self.latest_result else None
             self._draw_results(display_frame, landmarks,
-                                palm_pos, depth, vector_3d)
+                               palm_pos, depth, vector_3d)
 
             # FPS
             current_time = time.time()
@@ -312,28 +251,32 @@ class HandTracker:
 
             # Display
             cv2.imshow('Hand Tracking', display_frame)
-
             cv2.waitKey(1)
 
     def _cleanup(self):
-        """Clean up resources"""
+        """Clean up resources."""
         if self.landmarker:
             self.landmarker.close()
-        if self.pipeline:
-            self.pipeline.stop()
         cv2.destroyAllWindows()
-        logger.info("Cleanup complete")
+        logger.info("HandTracker cleanup complete")
+
 
 if __name__ == "__main__":
-    vector = SharedState()
-    handtrack = HandTracker(vector)
-    handtrack.start()
-    try:
-        print("System running. Press Ctrl+C to stop.")
-        while True:
-            time.sleep(1)
+    # Test standalone functionality
+    telemetry = Telemetry()
+    camera_manager = CameraManager()
 
-    except KeyboardInterrupt:
-        print("\nStopping system...")
-        handtrack.stop()
-        print("System stopped.")
+    if camera_manager.initialize():
+        hand_tracker = HandTracker(telemetry, camera_manager)
+        hand_tracker.start()
+        try:
+            print("Hand tracking running. Press Ctrl+C to stop.")
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nStopping hand tracking...")
+            hand_tracker.stop()
+            camera_manager.cleanup()
+            print("Hand tracking stopped.")
+    else:
+        print("Failed to initialize camera")

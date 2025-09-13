@@ -3,14 +3,8 @@ Base state for state machine
 """
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional
 
-from shared_state import SharedState
-from camera_manager import CameraManager
-from opc_client import OPCClient
-from kinematics_solver import InverseKinematicsSolver
-
-from states_enum import States
+from states.context import StateContext
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +12,8 @@ logger = logging.getLogger(__name__)
 class BaseState(ABC):
     """Abstract base class for all states."""
 
-    def __init__(self, shared_state: SharedState, camera_manager: CameraManager,
-                 opc_client: OPCClient, kinematics_solver: InverseKinematicsSolver):
-        self.shared_state = shared_state
-        self.camera_manager = camera_manager
-        self.opc_client = opc_client
-        self.kinematics_solver = kinematics_solver
+    def __init__(self, context: StateContext):
+        self.context = context
 
     @property
     def name(self) -> str:

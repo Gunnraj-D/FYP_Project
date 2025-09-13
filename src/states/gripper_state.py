@@ -1,50 +1,35 @@
 import logging
-from typing import Optional
-import numpy as np
-
-from shared_state import SharedState
-from camera_manager import CameraManager
-from opc_client import OPCClient
-from kinematics_solver import InverseKinematicsSolver
-from hand_detection_module import HandTracker
-
-from states_enum import States
+from states.context import StateContext
 from base_state import BaseState
+from control.command_bus import SetGripper
 
 logger = logging.getLogger(__name__)
 
 
 class GripperControlState(BaseState):
-    """Gripper Control State - Handles gripper function. """
+    """Gripper Control State - Handles gripper function."""
 
-    def __init__(self, shared_state: SharedState, camera_manager: CameraManager,
-                 opc_client: OPCClient, kinematics_solver: InverseKinematicsSolver,
-                 action: str):
+    def __init__(self, context: StateContext, action: str):
+        super().__init__(context=context)
 
-        super().__init__(shared_state, camera_manager,
-                         opc_client, kinematics_solver)
-
+        # TODO: use enums for gripper state?
         if action not in ("open", "close"):
-            raise ValueError(f"Action type requested for Gripper State does not exist! Action requested: {action}")
+            raise ValueError(f"Invalid gripper action: {action}")
 
         self.action = action
-        self.started_gripper = False
+        self.sent = False
 
     def enter(self):
         logger.info("Entering GRIPPER_CONTROL state")
 
     def execute(self):
-        if self.started_gripper:
+        if self.sent:
             return
-
-        self.shared_state.update_target_gripper_status(self.action)
-        self.started_gripper = True
+        self.context.commands.send(SetGripper(self.action))
+        self.sent = True
 
     def exit(self):
         logger.info("Exiting GRIPPER_CONTROL state")
 
     def is_complete(self) -> bool:
-        if self.shared_state.get_current_gripper_status() == self.shared_state.get_target_gripper_status():
-            return True
-
-        return False
+        return self.context.telemetry.get_current_gripper_status() == self.action

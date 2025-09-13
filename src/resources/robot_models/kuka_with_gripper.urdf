@@ -1,0 +1,90 @@
+<?xml version="1.0"?>
+<robot name="kuka_iiwa_with_robotiq_gripper">
+
+  <link name="base_link"/>
+  <link name="link_1"/>
+  <link name="link_2"/>
+  <link name="link_3"/>
+  <link name="link_4"/>
+  <link name="link_5"/>
+  <link name="link_6"/>
+  <link name="link_7"/>
+  <link name="tool0"/>
+  <link name="robotiq_85_base_link"/>
+  <link name="tcp"/>
+
+  <joint name="joint_a1" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="link_1"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.9668" upper="2.9668"/>
+  </joint>
+
+  <joint name="joint_a2" type="revolute">
+    <origin rpy="0 0 0" xyz="-0.00043624 0 0.36"/>
+    <parent link="link_1"/>
+    <child link="link_2"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0942" upper="2.0942"/>
+  </joint>
+
+  <joint name="joint_a3" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="link_2"/>
+    <child link="link_3"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.9668" upper="2.9668"/>
+  </joint>
+
+  <joint name="joint_a4" type="revolute">
+    <origin rpy="0 0 0" xyz="0.00043624 0 0.42"/>
+    <parent link="link_3"/>
+    <child link="link_4"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="-2.0942" upper="2.0942"/>
+  </joint>
+
+  <joint name="joint_a5" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="link_4"/>
+    <child link="link_5"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.9668" upper="2.9668"/>
+  </joint>
+
+  <joint name="joint_a6" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0.4"/>
+    <parent link="link_5"/>
+    <child link="link_6"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0942" upper="2.0942"/>
+  </joint>
+
+  <joint name="joint_a7" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="link_6"/>
+    <child link="link_7"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.0541" upper="3.0541"/>
+  </joint>
+
+  <joint name="joint_a7_tool0" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0.126"/>
+    <parent link="link_7"/>
+    <child link="tool0"/>
+  </joint>
+
+  <joint name="tool0_gripper_base" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="tool0"/>
+    <child link="robotiq_85_base_link"/>
+  </joint>
+
+  <joint name="gripper_base_to_tcp" type="fixed">
+    <parent link="robotiq_85_base_link"/>
+    <child link="tcp"/>
+    <origin xyz="0 0 0.138" rpy="0 0 0"/>
+  </joint>
+
+</robot>
