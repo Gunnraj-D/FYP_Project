@@ -6,6 +6,13 @@ import numpy as np
 from pathlib import Path
 
 # ============================================================================
+# DEBUG CONFIGURATION
+# ============================================================================
+
+# Visual debugging mode for GG-CNN2 grasp detection
+VISUAL_DEBUG_MODE = True
+
+# ============================================================================
 # CONFIG VARIABLES
 # ============================================================================
 
@@ -49,15 +56,17 @@ URDF_FILEPATH = SRC_DIR / "resources" / "robot_models" / \
 # Kinematic chain configuration
 BASE_ELEMENT = ["base_link"]
 ACTIVE_LINKS = [
-    False,  # base link - fixed
-    True,   # joint 1
-    True,   # joint 2
-    True,   # joint 3
-    True,   # joint 4
-    True,   # joint 5
-    True,   # joint 6
-    True,   # joint 7
-    False   # end-effector - fixed
+    False,  # base_link - fixed
+    True,   # link_1 - joint 1 (revolute)
+    True,   # link_2 - joint 2 (revolute)
+    True,   # link_3 - joint 3 (revolute)
+    True,   # link_4 - joint 4 (revolute)
+    True,   # link_5 - joint 5 (revolute)
+    True,   # link_6 - joint 6 (revolute)
+    True,   # link_7 - joint 7 (revolute)
+    False,  # tool0 - fixed joint
+    False,  # robotiq_85_base_link - fixed joint
+    False   # tcp - fixed joint
 ]
 
 # ============================================================================
@@ -65,16 +74,18 @@ ACTIVE_LINKS = [
 # ============================================================================
 
 # Camera position relative to TCP (meters)
+# For handheld camera setup - camera is essentially at TCP position
 CAMERA_TRANSLATION = np.array([
-    0.05,   # 50mm forward (x)
-    0.03,   # 30mm left (y)
-    0.02    # 20mm down (z)
+    0.0,   # No forward offset
+    0.0,   # No left offset
+    0.0    # No vertical offset (camera held at TCP level)
 ])
 
 # Camera orientation relative to TCP (degrees)
+# Camera is looking down at the table, so it's rotated 180 degrees around X axis
 CAMERA_ROTATION_EULER = {
-    'roll': 0,      # Rotation around X axis
-    'pitch': -20,   # Rotation around Y axis (tilt down)
+    'roll': 180,    # Rotation around X axis (camera looking down)
+    'pitch': 0,     # Rotation around Y axis
     'yaw': 0        # Rotation around Z axis
 }
 
@@ -82,8 +93,9 @@ CAMERA_ROTATION_EULER = {
 # HAND TRACKING CONFIGURATION
 # ============================================================================
 HAND_LOCATION_TEMP = {
-    'position': np.array([400, 0, 200]),  # mm in base frame
-    'approach_distance': 100,  # mm
+    # meters in base frame (converted from mm)
+    'position': np.array([0.4, 0, 0.2]),
+    'approach_distance': 0.1,  # meters (converted from 100 mm)
     'approach_direction': np.array([0, 0, -1])  # From above
 }
 
@@ -112,18 +124,21 @@ HAND_STABILITY_TIME_THRESHOLD = 2.0  # in seconds
 # OBJECT MANIPULATION CONFIGURATION
 # ============================================================================
 PICKUP_LOCATION = {
-    'position': np.array([400, 0, 200]),
-    'approach_distance': 100,
+    # Converted from [400, 0, 200] mm to meters
+    'position': np.array([0.4, 0, 0.2]),
+    'approach_distance': 0.1,  # Converted from 100 mm to meters
     'approach_direction': np.array([0, 0, -1])
 }
 
 # Approximate pose for the robot to move to before starting object detection
-# [x, y, z, rx, ry, rz] in mm and degrees
-PRE_PICKUP_POSE = [400, 0, 300, 0, 0, -90]
+# [x, y, z, rx, ry, rz] in meters and radians
+# Converted from [400, 0, 300, 0, 0, -90] mm/deg
+PRE_PICKUP_POSE = [0.4, 0, 0.5, 0, 0, -1.57]
 
 # General pose for the robot to move to before starting hand tracking
-# [x, y, z, rx, ry, rz] in mm and degrees
-HANDOFF_APPROACH_POSE = [500, 200, 350, 0, 0, -90]
+# [x, y, z, rx, ry, rz] in meters and radians
+# Converted from [500, 200, 350, 0, 0, -90] mm/deg
+HANDOFF_APPROACH_POSE = [0.5, 0.2, 0.35, 0, 0, -1.57]
 
 PLACE_APPROACH_DISTANCE = 150  # mm
 PLACE_RELEASE_DISTANCE = 50    # mm
