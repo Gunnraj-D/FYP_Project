@@ -54,8 +54,10 @@ def transform_camera_to_base(camera_position: List[float], tcp_matrix: np.ndarra
         tcp_pos = tcp_pos_homogeneous[:3]
 
         # Transform TCP position to base frame
-        base_pos_homogeneous = tcp_matrix @ np.append(tcp_pos, 1.0)
-        base_pos = base_pos_homogeneous[:3]
+        # Note: tcp_matrix is in meters, but tcp_pos is in mm, so we need to convert
+        tcp_pos_meters = tcp_pos / 1000.0  # Convert mm to meters
+        base_pos_homogeneous = tcp_matrix @ np.append(tcp_pos_meters, 1.0)
+        base_pos = base_pos_homogeneous[:3] * 1000.0  # Convert back to mm
 
         logger.debug(
             f"Camera position {camera_pos} -> Base position {base_pos}")

@@ -1,5 +1,5 @@
 import logging
-from base_state import BaseState
+from .base_state import BaseState
 
 logger = logging.getLogger(__name__)
 

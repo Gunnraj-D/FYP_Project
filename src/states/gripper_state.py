@@ -1,6 +1,6 @@
 import logging
 from states.context import StateContext
-from base_state import BaseState
+from .base_state import BaseState
 from control.command_bus import SetGripper
 
 logger = logging.getLogger(__name__)

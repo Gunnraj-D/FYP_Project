@@ -1,7 +1,8 @@
 """
-Hand Tracking State - Active hand tracking and placement pose calculation.
-This state continuously tracks the operator's hand and calculates the final placement pose
-for object handoff operations.
+Unified Hand Tracking State - Active hand tracking with robot movement control.
+This state combines hand tracking with robot movement control using the command bus.
+The robot moves toward the hand centroid with a specified height offset, and calculates
+placement pose when the hand remains stable for the required duration.
 """
 import logging
 import time
@@ -10,21 +11,29 @@ from typing import Optional
 
 from states.base_state import BaseState
 from states.context import StateContext
+from control.command_bus import SetJoints
 from hand_detection.hand_detection_module import HandTracker
-from config.config import HAND_STABILITY_TIME_THRESHOLD, HAND_STABILITY_THRESHOLD
+from camera_management.camera_transform_module import transform_camera_to_base
+from config.config import (
+    HAND_STABILITY_TIME_THRESHOLD,
+    HAND_STABILITY_THRESHOLD,
+    DISTANCE_TO_REMAIN_MM
+)
 
 logger = logging.getLogger(__name__)
 
 
-class HandTrackingState(BaseState):
+class UnifiedHandTrackingState(BaseState):
     """
-    State for active hand tracking and placement pose calculation.
+    Unified state for hand tracking with robot movement control.
 
     This state:
     1. Activates the HandTracker module for continuous hand detection
-    2. Receives real-time hand positions and stores them in telemetry
-    3. Calculates final placement pose by offsetting hand position with pickup height
-    4. Transitions to next state when hand position is stable
+    2. Moves the robot toward the hand centroid using command bus
+    3. Maintains DISTANCE_TO_REMAIN_MM height above the hand
+    4. Implements dead zone - no movement when within stability threshold
+    5. Calculates placement pose when hand remains stable for threshold time
+    6. Uses command bus for all robot movement commands
     """
 
     def __init__(self, context: StateContext):
@@ -35,12 +44,14 @@ class HandTrackingState(BaseState):
         self.is_hand_stable = False
         self.last_hand_position = None
         self.stability_check_interval = HAND_STABILITY_TIME_THRESHOLD / \
-            20.0  # Check stability 20 times per threshold period
+            20.0  # Check 20 times per threshold
         self.last_stability_check = 0.0
+        self.last_movement_time = 0.0
+        self.movement_interval = 0.1  # 10Hz movement updates
 
     def enter(self):
         """Initialize hand tracker and reset state variables."""
-        logger.info("Entering HandTrackingState")
+        logger.info("Entering UnifiedHandTrackingState")
 
         try:
             # Initialize hand tracker
@@ -59,15 +70,16 @@ class HandTrackingState(BaseState):
             self.is_hand_stable = False
             self.last_hand_position = None
             self.last_stability_check = 0.0
+            self.last_movement_time = 0.0
 
-            logger.info("HandTrackingState initialized successfully")
+            logger.info("UnifiedHandTrackingState initialized successfully")
 
         except Exception as e:
-            logger.error(f"Failed to initialize HandTrackingState: {e}")
+            logger.error(f"Failed to initialize UnifiedHandTrackingState: {e}")
             raise
 
     def execute(self):
-        """Main execution loop for hand tracking and pose calculation."""
+        """Main execution loop for hand tracking and robot movement."""
         current_time = time.time()
 
         # Throttle stability checking
@@ -81,8 +93,9 @@ class HandTrackingState(BaseState):
             hand_position = self.context.telemetry.get_camera_vector()
 
             # Check if hand is detected
-            if hand_position and hand_position != [0.0, 0.0, 0.0]:
+            if hand_position is not None and not np.array_equal(hand_position, [0.0, 0.0, 0.0]):
                 self._update_hand_tracking(hand_position)
+                self._move_robot_toward_hand(hand_position, current_time)
                 self._calculate_placement_pose(hand_position)
             else:
                 # Reset stability if no hand detected
@@ -91,14 +104,13 @@ class HandTrackingState(BaseState):
                 logger.debug("No hand detected, resetting stability")
 
         except Exception as e:
-            logger.error(f"Error in HandTrackingState execution: {e}")
+            logger.error(f"Error in UnifiedHandTrackingState execution: {e}")
 
     def _update_hand_tracking(self, hand_position):
         """Update hand tracking state and check stability."""
         try:
             # Store live hand pose in telemetry
             # Convert from camera vector format to pose format [x, y, z, rx, ry, rz]
-            # Add rotation components (assuming no rotation)
             live_hand_pose = hand_position + [0.0, 0.0, 0.0]
             self.context.telemetry.set_live_hand_pose(live_hand_pose)
 
@@ -126,6 +138,60 @@ class HandTrackingState(BaseState):
 
         except Exception as e:
             logger.error(f"Error updating hand tracking: {e}")
+
+    def _move_robot_toward_hand(self, hand_position, current_time):
+        """Move robot toward hand centroid using command bus."""
+        # Throttle movement updates
+        if current_time - self.last_movement_time < self.movement_interval:
+            return
+
+        try:
+            # Get current robot position
+            current_joints = self.context.telemetry.get_current_joints()
+            if current_joints is None or len(current_joints) != 7:
+                logger.warning("Invalid current joints, skipping movement")
+                return
+
+            # Calculate current TCP pose
+            current_tcp_pose = self.context.ik.solve_tcp(current_joints)
+
+            # Transform hand position from camera to base frame
+            hand_position_base = transform_camera_to_base(
+                hand_position, current_tcp_pose)
+
+            # Calculate target position with height offset
+            target_position = hand_position_base.copy()
+            # Add height offset in mm
+            target_position[2] += DISTANCE_TO_REMAIN_MM
+
+            # Calculate distance to target
+            current_position = current_tcp_pose[:3]  # x, y, z
+            distance_to_target = np.linalg.norm(
+                target_position - current_position)
+
+            # Dead zone check - don't move if within stability threshold
+            if distance_to_target < HAND_STABILITY_THRESHOLD:
+                logger.debug(
+                    f"Within dead zone ({distance_to_target:.1f}mm), not moving")
+                return
+
+            # Solve inverse kinematics for target position
+            target_joints = self.context.ik.solve_XYZ(
+                target_position, current_joints)
+
+            if target_joints is not None:
+                # Send movement command via command bus
+                self.context.commands.send(SetJoints(list(target_joints)))
+                self.last_movement_time = current_time
+                logger.debug(
+                    f"Moving toward hand: target joints {target_joints}")
+                logger.debug(f"Distance to target: {distance_to_target:.1f}mm")
+            else:
+                logger.warning(
+                    "Failed to solve inverse kinematics for target position")
+
+        except Exception as e:
+            logger.error(f"Error in robot movement: {e}")
 
     def _calculate_placement_pose(self, hand_position):
         """Calculate final placement pose for object handoff."""
@@ -181,7 +247,7 @@ class HandTrackingState(BaseState):
 
     def exit(self):
         """Clean up hand tracker and log final results."""
-        logger.info("Exiting HandTrackingState")
+        logger.info("Exiting UnifiedHandTrackingState")
 
         # Stop hand tracker
         if self.hand_tracker:
@@ -205,6 +271,7 @@ class HandTrackingState(BaseState):
         self.is_hand_stable = False
         self.last_hand_position = None
         self.last_stability_check = 0.0
+        self.last_movement_time = 0.0
 
     def get_tracking_stats(self) -> dict:
         """Get statistics about the hand tracking process."""

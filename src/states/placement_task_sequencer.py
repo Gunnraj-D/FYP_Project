@@ -12,7 +12,7 @@ from states.state_machine import StateMachine
 from states.task_sequencer import TaskSequencer
 from states.move_to_state import MoveToState
 from states.gripper_state import GripperControlState
-from states.hand_tracking_state import HandTrackingState
+from states.unified_hand_tracking_state import UnifiedHandTrackingState
 from config.config import HANDOFF_APPROACH_POSE
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class PlacementTaskSequencer(TaskSequencer):
 
     Sequence:
     1. MoveToState(pose=HANDOFF_APPROACH_POSE)
-    2. HandTrackingState()
+    2. UnifiedHandTrackingState()
     3. MoveToState(pose_from_telemetry='calculated_handoff_pose')
     4. GripperControlState(action='open')
     """
@@ -58,7 +58,7 @@ class PlacementTaskSequencer(TaskSequencer):
         states.append(MoveToState(context, target_location=handoff_location))
 
         # 2. Track hand and calculate placement pose
-        states.append(HandTrackingState(context))
+        states.append(UnifiedHandTrackingState(context))
 
         # 3. Move to calculated handoff pose
         states.append(MoveToState(

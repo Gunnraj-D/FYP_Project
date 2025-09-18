@@ -2,7 +2,7 @@ import logging
 import numpy as np
 
 from states.context import StateContext
-from base_state import BaseState
+from .base_state import BaseState
 from control.command_bus import SetJoints
 
 logger = logging.getLogger(__name__)

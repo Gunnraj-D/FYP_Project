@@ -116,7 +116,7 @@ class CameraManager:
 
     def get_average_depth(self, depth_frame: rs.depth_frame,
                            center: Tuple[int, int], radius: int) -> float:
-        """Get average depth in circular region."""
+        """Get median (used to be average) depth in circular region."""
         try:
             h, w = depth_frame.get_height(), depth_frame.get_width()
             cx, cy = center
@@ -135,7 +135,7 @@ class CameraManager:
             if valid_depths.size == 0:
                 return 0.0
 
-            return np.mean(valid_depths) * depth_frame.get_units()
+            return np.median(valid_depths) * depth_frame.get_units()
 
         except Exception as e:
             logger.error(f"Depth calculation error: {e}")

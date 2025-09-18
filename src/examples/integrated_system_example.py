@@ -207,7 +207,7 @@ def demonstrate_configuration_integration():
 
     # Show how states use configuration
     from states.generate_pickup_state import GeneratePickupState
-    from states.hand_tracking_state import HandTrackingState
+    from states.unified_hand_tracking_state import UnifiedHandTrackingState
 
     # Generate pickup state uses configuration
     pickup_state = GeneratePickupState(system.context)

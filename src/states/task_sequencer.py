@@ -1,7 +1,7 @@
 import logging
 from collections import deque
-from state_machine import StateMachine
-from base_state import BaseState
+from .state_machine import StateMachine
+from .base_state import BaseState
 
 logger = logging.getLogger(__name__)
 

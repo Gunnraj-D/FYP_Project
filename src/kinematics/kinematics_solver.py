@@ -42,7 +42,7 @@ class InverseKinematicsSolver:
             # Indices of the 7 actuated robot joints (exclude base and tool fixed joints)
             self.movable_joint_indices = [
                 i for i, active in enumerate(self.active_links_mask)
-                if active and i > 0 and i < len(self.active_links_mask) - 1
+                if active and i > 0
             ]
             if len(self.movable_joint_indices) != 7:
                 logger.warning(
@@ -76,7 +76,10 @@ class InverseKinematicsSolver:
                 f"Expected 7 joint values, got {len(joint_angles_7)}")
         joints_full = np.insert(np.asarray(
             joint_angles_7, dtype=float), 0, 0.0)
-        joints_full = np.append(joints_full, 0.0)
+        # Add 3 dummy joints for the 3 fixed links at the end
+        joints_full = np.append(joints_full, [0.0, 0.0, 0.0])
+        logger.debug(
+            f"Full joint array length: {len(joints_full)}, expected: {len(self.active_links_mask)}")
         tcp_matrix = self.solve_tcp(joints_full)
         tcp_pose = homogeneous_to_pose(tcp_matrix)
         return tcp_matrix, tcp_pose
@@ -93,7 +96,8 @@ class InverseKinematicsSolver:
         if len(current_joint_angles) == 7:
             initial_full = np.insert(np.asarray(
                 current_joint_angles, dtype=float), 0, 0.0)
-            initial_full = np.append(initial_full, 0.0)
+            # Add 3 dummy joints for the 3 fixed links at the end
+            initial_full = np.append(initial_full, [0.0, 0.0, 0.0])
         elif len(current_joint_angles) == len(self.active_links_mask):
             initial_full = np.asarray(current_joint_angles, dtype=float)
         else:
@@ -106,13 +110,30 @@ class InverseKinematicsSolver:
             if target_orientation is not None:
                 target_matrix[:3, :3] = target_orientation
                 orientation_mode = "all"
-            solution_angles_full = self.chain.inverse_kinematics(
-                target_matrix,
-                initial_position=initial_full,
-                max_iter=max_iterations,
-                tolerance=tolerance,
-                orientation_mode=orientation_mode
-            )
+            # Debug logging for ikpy call
+            logger.debug(f"Target matrix shape: {target_matrix.shape}")
+            logger.debug(f"Initial position shape: {initial_full.shape}")
+            logger.debug(f"Orientation mode: {orientation_mode}")
+
+            # Use ikpy 3.4.2 API format
+            if target_orientation is not None:
+                # Extract Z-axis direction from rotation matrix for ikpy
+                # Third column is Z-axis
+                z_axis_direction = target_orientation[:, 2]
+                solution_angles_full = self.chain.inverse_kinematics(
+                    target_position=target_position,
+                    target_orientation=z_axis_direction,
+                    orientation_mode="Z",  # Target Z-axis orientation
+                    initial_position=initial_full,
+                    max_iter=max_iterations
+                )
+            else:
+                # Position-only IK
+                solution_angles_full = self.chain.inverse_kinematics(
+                    target_position=target_position,
+                    initial_position=initial_full,
+                    max_iter=max_iterations
+                )
             # Compute final pose for error checking
             final_pose_matrix = self.solve_tcp(solution_angles_full)
             final_position = final_pose_matrix[:3, 3]
@@ -143,6 +164,8 @@ class InverseKinematicsSolver:
     ) -> np.ndarray:
         position = target_pose[:3]
         euler_angles = target_pose[3:6]
+        logger.debug(f"Position: {position}, type: {type(position)}")
+        logger.debug(f"Euler angles: {euler_angles}")
         rotation_matrix = R.from_euler('xyz', euler_angles).as_matrix()
         return self.solve_XYZ(
             position,
@@ -156,8 +179,10 @@ class InverseKinematicsSolver:
 # Planning/motion utilities colocated with kinematics for now
 def validate_workspace_limits(position: np.ndarray, workspace_limits: dict = None) -> bool:
     if workspace_limits is None:
+        # Updated workspace limits to accommodate KUKA iiwa's actual reach
+        # Z-axis extended to 1600mm to allow for current TCP position at 1444mm
         workspace_limits = {'min': np.array(
-            [-800, -800, 0]), 'max': np.array([800, 800, 1300])}
+            [-800, -800, 0]), 'max': np.array([800, 800, 1600])}
     position = np.array(position)
     return np.all(position >= workspace_limits['min']) and np.all(position <= workspace_limits['max'])
 

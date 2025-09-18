@@ -8,7 +8,7 @@ from typing import Optional
 from states.base_state import BaseState
 from states.context import StateContext
 from object_detection.ggcnn2_module import GGcnn2Module
-from config.config import GGCNN2_MODEL_PATH, GRASP_EXECUTION_CONFIG
+from config.config import GGCNN2_MODEL_PATH, GRASP_EXECUTION_CONFIG, VISUAL_DEBUG_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +124,15 @@ class GraspingState(BaseState):
             # GGCNN2 module doesn't need explicit cleanup
             pass
 
+        # Clean up visualization windows if debug mode was enabled
+        if VISUAL_DEBUG_MODE:
+            try:
+                import cv2
+                cv2.destroyAllWindows()
+                logger.debug("Closed visualization windows")
+            except Exception as e:
+                logger.warning(f"Failed to close visualization windows: {e}")
+
         # Reset state variables
         self.grasp_attempts = 0
         self.current_grasp_result = None
@@ -140,4 +149,3 @@ class GraspingState(BaseState):
         if self.current_grasp_result:
             return self.current_grasp_result.get('joint_angles')
         return None
-
