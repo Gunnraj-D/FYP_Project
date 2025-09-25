@@ -2,23 +2,54 @@
 Kinematics solver for KUKA iiwa robot.
 Provides forward and inverse kinematics using ikpy library.
 """
-import sys
-import os
-from pathlib import Path
-
-# Add the project root to Python path for imports
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
 from ikpy.chain import Chain
 import numpy as np
 from typing import List, Optional
 import logging
+import threading
+import multiprocessing
 from scipy.spatial.transform import Rotation as R
-from src.config.config import BASE_ELEMENT, ACTIVE_LINKS, URDF_FILEPATH
-
 
 logger = logging.getLogger(__name__)
+
+
+def _ik_worker_process(urdf_filepath, base_elements, active_links_mask, target_position,
+                       initial_full, target_orientation, max_iterations, result_queue):
+    """
+    Worker process for inverse kinematics computation.
+    Recreates the chain and runs ikpy.inverse_kinematics in isolation.
+    """
+    try:
+        # Recreate the chain in the worker process
+        chain = Chain.from_urdf_file(
+            urdf_filepath,
+            base_elements=base_elements,
+            active_links_mask=active_links_mask
+        )
+
+        # Run inverse kinematics
+        if target_orientation is not None:
+            z_axis_direction = target_orientation[:, 2]
+            solution = chain.inverse_kinematics(
+                target_position=target_position,
+                target_orientation=z_axis_direction,
+                orientation_mode="Z",
+                initial_position=initial_full,
+                max_iter=max_iterations
+            )
+        else:
+            solution = chain.inverse_kinematics(
+                target_position=target_position,
+                initial_position=initial_full,
+                max_iter=max_iterations
+            )
+
+        # Send success result
+        result_queue.put(('success', solution))
+
+    except Exception as e:
+        # Send error result
+        result_queue.put(('error', str(e)))
 
 
 def homogeneous_to_pose(T: np.ndarray) -> List[float]:
@@ -99,8 +130,8 @@ class InverseKinematicsSolver:
         target_position: List[float],
         current_joint_angles: List[float],
         target_orientation: Optional[np.ndarray] = None,
-        max_iterations: int = 100,
-        tolerance: float = 1e-4
+        max_iterations: int = 30,
+        tolerance: float = 1e-3
     ) -> np.ndarray:
         # Accept either 7-joint vector (robot joints) or full-length vector (chain)
         if len(current_joint_angles) == 7:
@@ -142,24 +173,62 @@ class InverseKinematicsSolver:
             # Limit iterations to prevent hanging
             max_iterations = min(max_iterations, 50)
 
-            if target_orientation is not None:
-                # Extract Z-axis direction from rotation matrix for ikpy
-                # Third column is Z-axis
-                z_axis_direction = target_orientation[:, 2]
-                solution_angles_full = self.chain.inverse_kinematics(
-                    target_position=target_position,
-                    target_orientation=z_axis_direction,
-                    orientation_mode="Z",  # Target Z-axis orientation
-                    initial_position=initial_full,
-                    max_iter=max_iterations
+            # Process-based timeout to prevent hanging
+            ctx = multiprocessing.get_context("spawn")
+            result_queue = ctx.Queue()
+
+            # Start worker process
+            process = ctx.Process(
+                target=_ik_worker_process,
+                args=(
+                    self.chain.urdf_filepath,
+                    self.chain.base_elements,
+                    self.active_links_mask,
+                    target_position,
+                    initial_full,
+                    target_orientation,
+                    max_iterations,
+                    result_queue
                 )
-            else:
-                # Position-only IK
-                solution_angles_full = self.chain.inverse_kinematics(
-                    target_position=target_position,
-                    initial_position=initial_full,
-                    max_iter=max_iterations
-                )
+            )
+
+            logger.debug("Starting IK worker process")
+            process.start()
+
+            try:
+                # Wait for result with timeout
+                solution_angles_full = None
+                try:
+                    # Try to get result within timeout
+                    result_type, result_data = result_queue.get(timeout=3.0)
+
+                    if result_type == 'success':
+                        solution_angles_full = result_data
+                        logger.debug("IK solver completed successfully")
+                    else:
+                        logger.warning(
+                            f"IK solver failed in worker: {result_data}")
+                        return np.array(current_joint_angles[:7])
+
+                except:
+                    # Timeout occurred
+                    logger.warning(
+                        "IK solver timed out after 3 seconds, terminating process")
+                    process.terminate()
+                    # Give it 1 second to terminate gracefully
+                    process.join(timeout=1.0)
+
+                    if process.is_alive():
+                        logger.warning("Force killing IK worker process")
+                        process.kill()
+                        process.join()
+
+                    return np.array(current_joint_angles[:7])
+
+            finally:
+                # Ensure process is cleaned up
+                if process.is_alive():
+                    process.join(timeout=0.1)
             # Compute final pose for error checking
             final_pose_matrix = self.solve_tcp(solution_angles_full)
             final_position = final_pose_matrix[:3, 3]
@@ -225,15 +294,3 @@ def calculate_approach_position(target_position: np.ndarray, approach_distance: 
     approach_direction = approach_direction / \
         np.linalg.norm(approach_direction)
     return target_position - approach_distance * approach_direction
-
-
-if __name__ == "__main__":
-    solver = InverseKinematicsSolver(
-        urdf_filepath=URDF_FILEPATH,
-        base_elements=BASE_ELEMENT,
-        active_links_mask=ACTIVE_LINKS
-    )
-    print(solver.solve_XYZ(
-        target_position=[0.5, 0.0, 0.6],
-        current_joint_angles=[0.5, -1.0, 0.5, -2.0, 0.5, 1.5, 0.5]
-    ))

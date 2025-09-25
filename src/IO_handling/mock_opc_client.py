@@ -1,6 +1,7 @@
 """
-OPC UA client wrapper for robot communication.
-Provides clean interface for robot control operations with dedicated background loop.
+Mock OPC UA client for robot communication simulation.
+Mirrors the structure of the original opc_client.py for seamless integration.
+Provides instantaneous movement simulation by setting target = current.
 """
 import asyncio
 from asyncua import Client, ua
@@ -13,7 +14,7 @@ from dataclasses import dataclass
 from control.command_bus import CommandBus, Command, SetJoints, SetGripper, EmergencyStop
 from control.telemetry_store import Telemetry
 from config.config import (
-    OPC_SERVER_URL, OPC_OBJECTS_NAME, OPC_ROBOT_NAME, OPC_UPDATE_INTERVAL_SECONDS,
+    OPC_SERVER_URL, OPC_MOCK_SERVER_URL, OPC_OBJECTS_NAME, OPC_ROBOT_NAME, OPC_UPDATE_INTERVAL_SECONDS,
     OPC_POLL_INTERVAL_MS, OPC_COMMAND_BATCH_SIZE, OPC_SKIP_REDUNDANT_WRITES,
     OPC_CONNECTION_TIMEOUT_SECONDS, OPC_RECONNECT_DELAY_SECONDS, OPC_MAX_RECONNECT_ATTEMPTS
 )
@@ -22,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class OPCConfig:
-    """OPC UA configuration parameters."""
-    url: str = OPC_SERVER_URL
+class MockOPCConfig:
+    """Mock OPC UA configuration parameters."""
+    url: str = OPC_MOCK_SERVER_URL
     objects_name: str = OPC_OBJECTS_NAME
     robot_name: str = OPC_ROBOT_NAME
     poll_interval_ms: int = OPC_POLL_INTERVAL_MS
@@ -35,13 +36,16 @@ class OPCConfig:
     max_reconnect_attempts: int = OPC_MAX_RECONNECT_ATTEMPTS
 
 
-class OPCClient:
-    """OPC UA client with dedicated background loop for robot communication."""
+class MockOPCClient:
+    """
+    Mock OPC UA client with instantaneous movement simulation.
+    Mirrors the original OPCClient structure for seamless integration.
+    """
 
-    def __init__(self, command_bus: CommandBus, telemetry: Telemetry, config: OPCConfig = None):
+    def __init__(self, command_bus: CommandBus, telemetry: Telemetry, config: MockOPCConfig = None):
         self.command_bus = command_bus
         self.telemetry = telemetry
-        self.config = config or OPCConfig()
+        self.config = config or MockOPCConfig()
 
         # Connection state
         self.client: Optional[Client] = None
@@ -56,7 +60,8 @@ class OPCClient:
         self.control_nodes: Dict[str, Any] = {}
 
         # State tracking for redundant write detection
-        self._last_joint_values: List[float] = [0.0] * 7
+        self._last_joint_values: List[float] = [
+            0.5, -1.0, 0.5, -2.0, 0.5, 1.5, 0.5]
         self._last_gripper_status: Optional[str] = None
         self._reconnect_attempts = 0
 
@@ -67,16 +72,16 @@ class OPCClient:
         """Start OPC UA communication in dedicated background thread."""
         with self._lock:
             if self.running:
-                logger.warning("OPC UA client already running")
+                logger.warning("Mock OPC UA client already running")
                 return
 
             self.running = True
             self._shutdown_event.clear()
             self.comm_thread = threading.Thread(
-                target=self._run_async_loop, name="OPCClient")
+                target=self._run_async_loop, name="MockOPCClient")
             self.comm_thread.daemon = True
             self.comm_thread.start()
-            logger.info("OPC UA client started")
+            logger.info("Mock OPC UA client started")
 
     def stop(self):
         """Stop OPC UA communication and cleanup resources."""
@@ -84,23 +89,24 @@ class OPCClient:
             if not self.running:
                 return
 
-            logger.info("Stopping OPC UA client...")
+            logger.info("Stopping Mock OPC UA client...")
             self.running = False
             self._shutdown_event.set()
 
             if self.comm_thread and self.comm_thread.is_alive():
                 self.comm_thread.join(timeout=5.0)
                 if self.comm_thread.is_alive():
-                    logger.warning("OPC client thread did not stop gracefully")
+                    logger.warning(
+                        "Mock OPC client thread did not stop gracefully")
 
-            logger.info("OPC UA client stopped")
+            logger.info("Mock OPC UA client stopped")
 
     def _run_async_loop(self):
         """Run async event loop in separate thread."""
         try:
             asyncio.run(self._main_loop())
         except Exception as e:
-            logger.error(f"OPC client async loop error: {e}")
+            logger.error(f"Mock OPC client async loop error: {e}")
         finally:
             with self._lock:
                 self.connected = False
@@ -108,12 +114,26 @@ class OPCClient:
 
     async def _main_loop(self):
         """Main async communication loop with reconnection logic."""
+        logger.info("🔄 Starting mock OPC client main loop")
+
         while self.running and not self._shutdown_event.is_set():
             try:
+                logger.info(f"🔄 Attempting to connect to {self.config.url}")
                 async with Client(url=self.config.url) as self.client:
-                    self.client.set_session_timeout(
-                        self.config.connection_timeout * 1000)
+                    logger.info("✅ Mock OPC client connected to server")
+
+                    # Set connection timeout (if supported by library version)
+                    try:
+                        if hasattr(self.client, 'set_session_timeout'):
+                            self.client.set_session_timeout(
+                                self.config.connection_timeout * 1000)
+                    except (AttributeError, Exception):
+                        pass  # Skip if not supported
+
+                    logger.info("🔄 Initializing nodes...")
                     await self._initialize_nodes()
+
+                    logger.info("🔄 Starting robot program...")
                     await self._start_robot_program()
 
                     with self._lock:
@@ -124,10 +144,12 @@ class OPCClient:
                     self.telemetry.update_robot_status(
                         {'connected': True, 'status_code': 0})
 
+                    logger.info(
+                        "✅ Mock OPC client connected, starting communication loop")
                     await self._communication_loop()
 
             except Exception as e:
-                logger.error(f"OPC UA connection error: {e}")
+                logger.error(f"Mock OPC UA connection error: {e}")
 
                 with self._lock:
                     self.connected = False
@@ -146,9 +168,12 @@ class OPCClient:
                     break
 
                 if self.running and not self._shutdown_event.is_set():
+                    # Exponential backoff for reconnection
+                    wait_time = min(self.config.reconnect_delay *
+                                    (2 ** self._reconnect_attempts), 10.0)
                     logger.info(
-                        f"Reconnecting in {self.config.reconnect_delay}s (attempt {self._reconnect_attempts})")
-                    await asyncio.sleep(self.config.reconnect_delay)
+                        f"Reconnecting in {wait_time:.1f}s (attempt {self._reconnect_attempts})")
+                    await asyncio.sleep(wait_time)
 
         # Cleanup on exit
         await self._cleanup()
@@ -156,31 +181,39 @@ class OPCClient:
     async def _initialize_nodes(self):
         """Initialize OPC UA node references."""
         try:
-            root = self.client.get_root_node()
-            objects = await root.get_child([self.config.objects_name])
-            robot = await objects.get_child([self.config.robot_name])
+            # Access nodes by their node IDs to match server structure
+            # Objects folder (ns=0;i=85)
+            objects = self.client.get_node("ns=0;i=85")
 
-            # Initialize joint write nodes (R1c_Joi1 to R1c_Joi7)
-            for i in range(1, 8):
-                node_name = f"R1c_Joi{i}"
-                self.joint_write_nodes[i] = await robot.get_child([node_name])
+            # Robot object (ns=2;i=22)
+            robot = self.client.get_node("ns=2;i=22")
 
-            # Initialize joint read nodes (R1d_Joi1 to R1d_Joi7)
+            # Initialize joint write nodes (R1c_Joi1 to R1c_Joi7) - ns=2;i=1001-1007
             for i in range(1, 8):
-                node_name = f"R1d_Joi{i}"
-                self.joint_read_nodes[i] = await robot.get_child([node_name])
+                node_id = f"ns=2;i={1000 + i}"
+                self.joint_write_nodes[i] = self.client.get_node(node_id)
+
+            # Initialize joint read nodes (R1d_Joi1 to R1d_Joi7) - ns=2;i=2001-2007
+            for i in range(1, 8):
+                node_id = f"ns=2;i={2000 + i}"
+                self.joint_read_nodes[i] = self.client.get_node(node_id)
 
             # Initialize control nodes
-            self.control_nodes['start'] = await robot.get_child(["R1c_Start"])
-            self.control_nodes['prog_id'] = await robot.get_child(["R1c_ProgID"])
-            self.control_nodes['status'] = await robot.get_child(["R1d_Status"])
-            self.control_nodes['gripper_control'] = await robot.get_child(["R1c_GripperAct"])
-            self.control_nodes['gripper_current'] = await robot.get_child(["R1d_GripperAct"])
+            self.control_nodes['start'] = self.client.get_node(
+                "ns=2;i=3001")  # R1c_Start
+            self.control_nodes['prog_id'] = self.client.get_node(
+                "ns=2;i=3002")  # R1c_ProgID
+            self.control_nodes['status'] = self.client.get_node(
+                "ns=2;i=3003")  # R1d_Status
+            self.control_nodes['gripper_control'] = self.client.get_node(
+                "ns=2;i=3004")  # R1c_GripperAct
+            self.control_nodes['gripper_current'] = self.client.get_node(
+                "ns=2;i=3005")  # R1d_GripperAct
 
-            logger.info("OPC UA nodes initialized successfully")
+            logger.info("Mock OPC UA nodes initialized successfully")
 
         except Exception as e:
-            logger.error(f"Failed to initialize OPC UA nodes: {e}")
+            logger.error(f"Failed to initialize Mock OPC UA nodes: {e}")
             raise
 
     async def _start_robot_program(self):
@@ -194,15 +227,45 @@ class OPCClient:
             start = ua.Variant(True, ua.VariantType.Boolean)
             await self.control_nodes['start'].write_value(start)
 
-            logger.info("Robot program started")
+            # Initialize joint values to home position
+            await self._initialize_joint_values()
+
+            logger.info("Mock robot program started")
 
         except Exception as e:
-            logger.error(f"Failed to start robot program: {e}")
+            logger.error(f"Failed to start mock robot program: {e}")
+
+    async def _initialize_joint_values(self):
+        """Initialize joint values to home position."""
+        try:
+            # Set initial joint values to home position
+            home_joints = [0.5, -1.0, 0.5, -2.0, 0.5, 1.5, 0.5]
+            for i in range(1, 8):
+                joint_value = ua.Variant(
+                    home_joints[i-1], ua.VariantType.Double)
+                # Write to both write nodes and read nodes for proper initialization
+                await self.joint_write_nodes[i].write_value(joint_value)
+                await self.joint_read_nodes[i].write_value(joint_value)
+
+            # Update telemetry with initial values
+            self.telemetry.update_current_joints(home_joints)
+
+            logger.info("Initialized joint values to home position")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize joint values: {e}")
 
     async def _stop_robot_program(self):
         """Stop the robot control program."""
         try:
-            if 'start' in self.control_nodes and 'prog_id' in self.control_nodes:
+            # Only try to stop if we're connected and have valid nodes
+            if (self.connected and self.client and
+                self.control_nodes and
+                'start' in self.control_nodes and
+                'prog_id' in self.control_nodes and
+                self.control_nodes['start'] is not None and
+                    self.control_nodes['prog_id'] is not None):
+
                 # Stop the program
                 start = ua.Variant(False, ua.VariantType.Boolean)
                 await self.control_nodes['start'].write_value(start)
@@ -211,17 +274,21 @@ class OPCClient:
                 program_id = ua.Variant(0, ua.VariantType.Int32)
                 await self.control_nodes['prog_id'].write_value(program_id)
 
-                logger.info("Robot program stopped")
+                logger.info("Mock robot program stopped")
 
         except Exception as e:
-            logger.error(f"Failed to stop robot program: {e}")
+            logger.error(f"Failed to stop mock robot program: {e}")
 
     async def _communication_loop(self):
         """Main communication loop with telemetry updates and command processing."""
         loop_interval = self.config.poll_interval_ms / 1000.0
+        loop_count = 0
+
+        logger.info("🔄 Starting mock OPC communication loop")
 
         while self.running and not self._shutdown_event.is_set():
             loop_start = time.time()
+            loop_count += 1
 
             try:
                 # 1. Read telemetry from robot
@@ -231,7 +298,7 @@ class OPCClient:
                 await self._process_commands()
 
             except Exception as e:
-                logger.error(f"Communication loop error: {e}")
+                logger.error(f"Mock communication loop error: {e}")
 
             # Maintain loop timing
             elapsed = time.time() - loop_start
@@ -240,7 +307,7 @@ class OPCClient:
                 await asyncio.sleep(sleep_time)
             elif elapsed > loop_interval * 1.1:  # Warn if significantly over
                 logger.warning(
-                    f"OPC loop exceeded target interval by {elapsed - loop_interval:.3f}s")
+                    f"Mock OPC loop exceeded target interval by {elapsed - loop_interval:.3f}s")
 
     async def _update_telemetry(self):
         """Read robot state and update telemetry store."""
@@ -271,18 +338,19 @@ class OPCClient:
             if not commands:
                 return  # No commands to process
 
-            logger.debug(
+            logger.info(
                 f"Processing {len(commands)} commands from CommandBus")
 
             # Process commands sequentially to preserve order
             for command in commands[:self.config.command_batch_size]:
+                logger.info(f"Executing command: {type(command).__name__}")
                 await self._execute_command(command)
 
         except Exception as e:
             logger.error(f"Failed to process commands: {e}")
 
     async def _execute_command(self, command: Command):
-        """Execute a single command."""
+        """Execute a single command with instantaneous movement simulation."""
         try:
             if isinstance(command, SetJoints):
                 await self._write_joint_positions(command.joints)
@@ -298,7 +366,11 @@ class OPCClient:
                 f"Failed to execute command {type(command).__name__}: {e}")
 
     async def _write_joint_positions(self, joint_positions: List[float]):
-        """Write joint positions with redundant write detection."""
+        """
+        Write joint positions with instantaneous movement simulation.
+        This is the key difference from the original client - we simulate
+        instantaneous movement by setting current = target immediately.
+        """
         if not self.connected or not self.client:
             return
 
@@ -310,19 +382,32 @@ class OPCClient:
                 self._last_joint_values = joint_positions.copy()
 
         try:
+            # Write to target nodes (R1c_Joi1-7)
             for i in range(1, 8):
                 if i <= len(joint_positions):
                     value = ua.Variant(
                         float(joint_positions[i-1]), ua.VariantType.Double)
                     await self.joint_write_nodes[i].write_value(value)
 
-            logger.debug(f"Wrote joint positions: {joint_positions}")
+            # INSTANTANEOUS MOVEMENT SIMULATION:
+            # Immediately write the same values to current nodes (R1d_Joi1-7)
+            # This simulates instantaneous robot movement
+            for i in range(1, 8):
+                if i <= len(joint_positions):
+                    value = ua.Variant(
+                        float(joint_positions[i-1]), ua.VariantType.Double)
+                    await self.joint_read_nodes[i].write_value(value)
+
+            # Update telemetry with the new current joint positions for instantaneous movement
+            self.telemetry.update_current_joints(joint_positions)
+            logger.debug(
+                f"Updated telemetry with joint positions: {joint_positions}")
 
         except Exception as e:
             logger.error(f"Failed to write joint positions: {e}")
 
     async def _write_gripper_status(self, status: str):
-        """Write gripper status with redundant write detection."""
+        """Write gripper status with redundant write detection and instantaneous simulation."""
         if not self.connected or not self.client:
             return
 
@@ -345,6 +430,17 @@ class OPCClient:
                     f"Wrote gripper control: {gripper_value} (status: {status})")
             else:
                 logger.warning("Gripper control node not available")
+
+            # INSTANTANEOUS MOVEMENT SIMULATION:
+            # Immediately write the same value to current gripper state
+            # This simulates instantaneous gripper movement
+            if 'gripper_current' in self.control_nodes:
+                value = ua.Variant(gripper_value, ua.VariantType.Boolean)
+                await self.control_nodes['gripper_current'].write_value(value)
+                logger.debug(
+                    f"Updated gripper current state: {gripper_value} (status: {status})")
+            else:
+                logger.warning("Gripper current node not available")
 
         except Exception as e:
             logger.error(f"Failed to write gripper status: {e}")
@@ -412,9 +508,15 @@ class OPCClient:
     async def _cleanup(self):
         """Cleanup resources on shutdown."""
         try:
-            await self._stop_robot_program()
+            # Only attempt cleanup if we have a valid connection
+            if self.connected and self.client:
+                await self._stop_robot_program()
+            else:
+                logger.debug("Skipping cleanup - not connected")
         except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+            # Silently ignore cleanup errors during shutdown
+            logger.debug(f"Cleanup error (ignored): {e}")
+            pass
 
     def is_connected(self) -> bool:
         """Check if OPC UA client is connected and running."""
@@ -430,3 +532,8 @@ class OPCClient:
                 'reconnect_attempts': self._reconnect_attempts,
                 'thread_alive': self.comm_thread.is_alive() if self.comm_thread else False
             }
+
+
+# Alias for compatibility with original code
+OPCClient = MockOPCClient
+OPCConfig = MockOPCConfig

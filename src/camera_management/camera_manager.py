@@ -115,7 +115,7 @@ class CameraManager:
             return (0.0, 0.0, 0.0)
 
     def get_average_depth(self, depth_frame: rs.depth_frame,
-                           center: Tuple[int, int], radius: int) -> float:
+                          center: Tuple[int, int], radius: int) -> float:
         """Get median (used to be average) depth in circular region."""
         try:
             h, w = depth_frame.get_height(), depth_frame.get_width()
@@ -143,7 +143,7 @@ class CameraManager:
 
     def cleanup(self):
         """Clean up camera resources."""
-        if self.pipeline:
+        if self.pipeline and self.is_initialized:
             self.pipeline.stop()
         self.is_initialized = False
         logger.info("Camera cleanup complete")

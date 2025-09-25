@@ -43,10 +43,37 @@ class MoveToState(BaseState):
             logger.error("No target location specified")
             return
 
+        # Get current joints with fallback to default values
+        current_joints = self.context.telemetry.get_current_joints()
+        logger.info(f"current joints: {current_joints}")
+        if current_joints is None or len(current_joints) == 0:
+            logger.warning(
+                "Current joints not available, using default home position")
+            current_joints = np.array([0.0] * 7, dtype=float)
+
+        # Debug: Print values to understand the issue
+        logger.info(f"Target location: {target_location}")
+        logger.info(f"Current joints: {current_joints}")
+        logger.info(f"Current joints type: {type(current_joints)}")
+        logger.info(
+            f"Current joints shape: {current_joints.shape if hasattr(current_joints, 'shape') else 'No shape'}")
+
+        logger.info(f"Target location: {target_location}")
         self.target_joint_angles = self.context.ik.solve_XYZ(
-            target_location, self.context.telemetry.get_current_joints())
-        self.context.commands.send(SetJoints(list(self.target_joint_angles)))
+            target_location, current_joints)
+        if self.target_joint_angles is None:
+            logger.error(
+                f"IK solver failed for target location: {target_location}")
+            # Set to current to avoid infinite loop
+            self.target_joint_angles = current_joints
+            return
+        self.context.commands.send(
+            SetJoints(list(self.target_joint_angles)))
         self.started_motion = True
+        # except Exception as e:
+        #     logger.error(f"IK solver error: {e}")
+        #     self.target_joint_angles = current_joints  # Set to current to avoid infinite loop
+        #     return
 
     def _get_pose_from_telemetry(self):
         """Get pose from telemetry based on the specified key."""
@@ -65,5 +92,23 @@ class MoveToState(BaseState):
         logger.info("Exiting MOVE_TO state")
 
     def is_complete(self) -> bool:
+
         current = self.context.telemetry.get_current_joints()
-        return np.allclose(current, self.target_joint_angles, atol=1e-2)
+        if self.target_joint_angles is None:
+            logger.warning("Target joint angles not set, state not complete")
+            return False
+
+        if current is None:
+            logger.warning("Current joints not available, state not complete")
+            return False
+
+        # Convert to numpy arrays for comparison
+        current_np = np.array(current)
+        target_np = np.array(self.target_joint_angles)
+
+        is_close = np.allclose(current_np, target_np, atol=1e-2)
+        logger.info(f"Current joints: {current_np}")
+        logger.info(f"Target joints: {target_np}")
+        logger.info(f"Are close: {is_close}")
+
+        return is_close

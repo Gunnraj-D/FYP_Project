@@ -12,7 +12,7 @@ from enum import Enum
 from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager, CameraConfig
-from IO_handling.opc_client import OPCClient, OPCConfig
+from IO_handling.opc_client_factory import OPCClientFactory, OPCConfig
 from hand_detection.hand_detection_module import HandTracker, HandTrackingConfig
 from object_detection.ggcnn2_module import GGcnn2Module
 from kinematics.kinematics_solver import InverseKinematicsSolver
@@ -75,7 +75,7 @@ class IntegratedRobotControlSystem:
     4. Provides unified control interface
     """
 
-    def __init__(self):
+    def __init__(self, opc_mode: str = None):
         # Initialize shared state components
         self.telemetry = Telemetry()
         self.command_bus = CommandBus()
@@ -84,14 +84,9 @@ class IntegratedRobotControlSystem:
         camera_config = CameraConfig()
         self.camera_manager = CameraManager(camera_config)
 
-        # Initialize OPC UA client
-        opc_config = OPCConfig(
-            url=OPC_SERVER_URL,
-            objects_name=OPC_OBJECTS_NAME,
-            robot_name=OPC_ROBOT_NAME
-        )
-        self.opc_client = OPCClient(
-            self.command_bus, self.telemetry, opc_config)
+        # Initialize OPC UA client using factory
+        self.opc_client = OPCClientFactory.create_client(
+            self.command_bus, self.telemetry, None, opc_mode)
 
         # Initialize kinematics solver
         self.kinematics_solver = InverseKinematicsSolver(

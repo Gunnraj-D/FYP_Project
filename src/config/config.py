@@ -45,6 +45,11 @@ OPC_CONNECTION_TIMEOUT_SECONDS = 5.0  # Connection timeout
 OPC_RECONNECT_DELAY_SECONDS = 2.0  # Delay before reconnection attempts
 OPC_MAX_RECONNECT_ATTEMPTS = 5  # Maximum reconnection attempts
 
+# OPC UA Mode Configuration
+OPC_MODE = "real"  # Options: "real", "mock"
+# URL for mock server (different port)
+OPC_MOCK_SERVER_URL = "opc.tcp://127.0.0.1:4841/"
+
 # ============================================================================
 # ROBOT CONFIGURATION
 # ============================================================================

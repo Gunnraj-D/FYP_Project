@@ -25,6 +25,8 @@ class GripperControlState(BaseState):
     def execute(self):
         if self.sent:
             return
+        # Set target status in telemetry before sending command
+        self.context.telemetry.update_target_gripper_status(self.action)
         self.context.commands.send(SetGripper(self.action))
         self.sent = True
 

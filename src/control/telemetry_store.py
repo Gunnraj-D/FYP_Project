@@ -20,7 +20,7 @@ class _ArmState:
 @dataclass
 class _GripperState:
     current_status: str = ""  # "open" | "close" or "" initially
-    # target_status: str   # "open" | "close" or "" initially
+    target_status: str = ""   # "open" | "close" or "" initially
 
 
 @dataclass
@@ -94,7 +94,10 @@ class Telemetry:
     def get_current_joints(self) -> np.ndarray:
         """Get current joint positions as a numpy array of len 7."""
         with self._arm_lock:
-            return np.array(self._arm.current_joints, dtype=float)
+            if self._arm is None or self._arm.current_joints is None:
+                return np.array([0.0] * 7, dtype=float)
+            joints = np.array(self._arm.current_joints, dtype=float)
+            return joints
 
     def update_current_joints(self, joint_list: List[float]):
         """Update current joint positions from robot."""
@@ -123,6 +126,15 @@ class Telemetry:
         """Get target gripper status"""
         with self._gripper_lock:
             return self._gripper.target_status
+
+    def update_target_gripper_status(self, status: str):
+        """Update target gripper status"""
+        if status not in ("open", "close"):
+            raise ValueError(
+                f"Gripper status is not valid. Attempted to update target gripper to status: {status}"
+            )
+        with self._gripper_lock:
+            self._gripper.target_status = status
 
     # === Camera and Handtracking Methods === #
     def get_camera_vector(self) -> List[float]:

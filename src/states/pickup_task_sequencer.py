@@ -12,7 +12,7 @@ from states.state_machine import StateMachine
 from states.task_sequencer import TaskSequencer
 from states.move_to_state import MoveToState
 from states.gripper_state import GripperControlState
-from states.generate_pickup_state import GeneratePickupState
+from states.grasping_state import GraspingState
 from config.config import PRE_PICKUP_POSE
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class PickupTaskSequencer(TaskSequencer):
 
     Sequence:
     1. MoveToState(pose=PRE_PICKUP_POSE)
-    2. GeneratePickupState()
+    2. GraspingState()
     3. GripperControlState(action='open')
     4. MoveToState(pose_from_telemetry='generated_approach_pose')
     5. MoveToState(pose_from_telemetry='generated_grasp_pose')
@@ -62,7 +62,7 @@ class PickupTaskSequencer(TaskSequencer):
             context, target_location=pre_pickup_location))
 
         # 2. Generate pickup pose using GGCNN2
-        states.append(GeneratePickupState(context))
+        states.append(GraspingState(context))
 
         # 3. Open gripper
         states.append(GripperControlState(context, action='open'))
