@@ -74,12 +74,10 @@ class MockOPCClient:
             if self.running:
                 logger.warning("Mock OPC UA client already running")
                 return
-
             self.running = True
             self._shutdown_event.clear()
             self.comm_thread = threading.Thread(
-                target=self._run_async_loop, name="MockOPCClient")
-            self.comm_thread.daemon = True
+                target=self._run_async_loop, name="MockOPCClient", daemon=True)
             self.comm_thread.start()
             logger.info("Mock OPC UA client started")
 
@@ -88,23 +86,22 @@ class MockOPCClient:
         with self._lock:
             if not self.running:
                 return
-
             logger.info("Stopping Mock OPC UA client...")
             self.running = False
             self._shutdown_event.set()
-
             if self.comm_thread and self.comm_thread.is_alive():
-                self.comm_thread.join(timeout=5.0)
+                self.comm_thread.join(timeout=3.0)
                 if self.comm_thread.is_alive():
-                    logger.warning(
-                        "Mock OPC client thread did not stop gracefully")
-
-            logger.info("Mock OPC UA client stopped")
+                    logger.warning("Mock OPC client thread did not stop gracefully")
+        logger.info("Mock OPC UA client stopped")
 
     def _run_async_loop(self):
         """Run async event loop in separate thread."""
         try:
-            asyncio.run(self._main_loop())
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self._main_loop())
         except Exception as e:
             logger.error(f"Mock OPC client async loop error: {e}")
         finally:
@@ -115,68 +112,52 @@ class MockOPCClient:
     async def _main_loop(self):
         """Main async communication loop with reconnection logic."""
         logger.info("🔄 Starting mock OPC client main loop")
-
         while self.running and not self._shutdown_event.is_set():
             try:
                 logger.info(f"🔄 Attempting to connect to {self.config.url}")
                 async with Client(url=self.config.url) as self.client:
                     logger.info("✅ Mock OPC client connected to server")
-
-                    # Set connection timeout (if supported by library version)
-                    try:
-                        if hasattr(self.client, 'set_session_timeout'):
-                            self.client.set_session_timeout(
-                                self.config.connection_timeout * 1000)
-                    except (AttributeError, Exception):
-                        pass  # Skip if not supported
-
-                    logger.info("🔄 Initializing nodes...")
                     await self._initialize_nodes()
-
-                    logger.info("🔄 Starting robot program...")
                     await self._start_robot_program()
 
                     with self._lock:
                         self.connected = True
                         self._reconnect_attempts = 0
-
-                    # Update telemetry with connection status
-                    self.telemetry.update_robot_status(
-                        {'connected': True, 'status_code': 0})
-
-                    logger.info(
-                        "✅ Mock OPC client connected, starting communication loop")
+                    
+                    self.telemetry.update_robot_status({'connected': True, 'status_code': 0})
+                    logger.info("✅ Mock OPC client connected, starting communication loop")
+                    
                     await self._communication_loop()
 
-            except Exception as e:
-                logger.error(f"Mock OPC UA connection error: {e}")
+                    # --- SOLUTION PART 1: Stop the program before disconnecting ---
+                    # When the communication loop finishes (because self.running is False),
+                    # stop the robot program while the connection is still active.
+                    logger.info("Communication loop ended. Stopping robot program...")
+                    await self._stop_robot_program()
 
+            except (ConnectionRefusedError, asyncio.TimeoutError) as e:
+                logger.warning(f"Mock OPC UA connection failed: {e}")
+            except Exception as e:
+                logger.error(f"Mock OPC UA main loop error: {e}", exc_info=True)
+            finally:
                 with self._lock:
                     self.connected = False
-                    self._reconnect_attempts += 1
-
-                # Update telemetry with disconnection status
-                self.telemetry.update_robot_status({
-                    'connected': False,
-                    'status_code': -1,
-                    'error_message': str(e)
-                })
-
-                if self._reconnect_attempts >= self.config.max_reconnect_attempts:
-                    logger.error(
-                        f"Max reconnection attempts ({self.config.max_reconnect_attempts}) reached")
-                    break
-
+                
                 if self.running and not self._shutdown_event.is_set():
-                    # Exponential backoff for reconnection
-                    wait_time = min(self.config.reconnect_delay *
-                                    (2 ** self._reconnect_attempts), 10.0)
-                    logger.info(
-                        f"Reconnecting in {wait_time:.1f}s (attempt {self._reconnect_attempts})")
+                    self._reconnect_attempts += 1
+                    if self._reconnect_attempts >= self.config.max_reconnect_attempts:
+                        logger.error(f"Max reconnection attempts ({self.config.max_reconnect_attempts}) reached. Stopping client.")
+                        self.running = False
+                        break
+                    
+                    wait_time = min(self.config.reconnect_delay * (2 ** self._reconnect_attempts), 10.0)
+                    logger.info(f"Reconnecting in {wait_time:.1f}s (attempt {self._reconnect_attempts})")
                     await asyncio.sleep(wait_time)
+        
+        # --- SOLUTION PART 2: Simplify cleanup ---
+        # The cleanup logic is now handled at the end of the connection block.
+        logger.info("Mock OPC client main loop finished.")
 
-        # Cleanup on exit
-        await self._cleanup()
 
     async def _initialize_nodes(self):
         """Initialize OPC UA node references."""
@@ -258,26 +239,16 @@ class MockOPCClient:
     async def _stop_robot_program(self):
         """Stop the robot control program."""
         try:
-            # Only try to stop if we're connected and have valid nodes
-            if (self.connected and self.client and
-                self.control_nodes and
-                'start' in self.control_nodes and
-                'prog_id' in self.control_nodes and
-                self.control_nodes['start'] is not None and
-                    self.control_nodes['prog_id'] is not None):
-
-                # Stop the program
-                start = ua.Variant(False, ua.VariantType.Boolean)
-                await self.control_nodes['start'].write_value(start)
-
-                # Reset program ID
-                program_id = ua.Variant(0, ua.VariantType.Int32)
-                await self.control_nodes['prog_id'].write_value(program_id)
-
-                logger.info("Mock robot program stopped")
-
+            if self.client and self.connected:
+                logger.info("Writing 'stop' to robot program...")
+                await self.control_nodes['start'].write_value(ua.Variant(False, ua.VariantType.Boolean))
+                await self.control_nodes['prog_id'].write_value(ua.Variant(0, ua.VariantType.Int32))
+                logger.info("Mock robot program stopped successfully.")
+            else:
+                logger.warning("Cannot stop robot program, client is not connected.")
         except Exception as e:
-            logger.error(f"Failed to stop mock robot program: {e}")
+            # This error is now less likely but we keep the catch for robustness
+            logger.error(f"Failed to stop mock robot program during shutdown: {e}")
 
     async def _communication_loop(self):
         """Main communication loop with telemetry updates and command processing."""
@@ -509,10 +480,11 @@ class MockOPCClient:
         """Cleanup resources on shutdown."""
         try:
             # Only attempt cleanup if we have a valid connection
-            if self.connected and self.client:
+            if self.connected and self.client and self.control_nodes:
                 await self._stop_robot_program()
             else:
-                logger.debug("Skipping cleanup - not connected")
+                logger.debug(
+                    "Skipping cleanup - not connected or nodes not available")
         except Exception as e:
             # Silently ignore cleanup errors during shutdown
             logger.debug(f"Cleanup error (ignored): {e}")

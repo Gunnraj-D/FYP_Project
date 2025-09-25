@@ -164,13 +164,24 @@ class IntegratedRobotControlSystem:
         logger.info("Stopping Integrated Robot Control System...")
         self.running = False
 
-        # Stop components in reverse order
-        if hasattr(self, 'hand_tracker'):
-            self.hand_tracker.stop()
-        if hasattr(self, 'opc_client'):
-            self.opc_client.stop()
-        if hasattr(self, 'camera_manager'):
-            self.camera_manager.cleanup()
+        # Stop components in reverse order with error handling
+        try:
+            if hasattr(self, 'hand_tracker') and self.hand_tracker:
+                self.hand_tracker.stop()
+        except Exception as e:
+            logger.warning(f"Error stopping hand tracker: {e}")
+
+        try:
+            if hasattr(self, 'opc_client') and self.opc_client:
+                self.opc_client.stop()
+        except Exception as e:
+            logger.warning(f"Error stopping OPC client: {e}")
+
+        try:
+            if hasattr(self, 'camera_manager') and self.camera_manager:
+                self.camera_manager.cleanup()
+        except Exception as e:
+            logger.warning(f"Error cleaning up camera manager: {e}")
 
         logger.info("System stopped.")
 

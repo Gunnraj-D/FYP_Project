@@ -78,7 +78,7 @@ class CameraManager:
 
     def get_frames(self) -> Tuple[Optional[np.ndarray], Optional[rs.depth_frame]]:
         """Get aligned color and depth frames."""
-        if not self.is_initialized:
+        if not self.is_initialized or not self.pipeline:
             logger.warning("Camera not initialized")
             return None, None
 
@@ -144,7 +144,13 @@ class CameraManager:
     def cleanup(self):
         """Clean up camera resources."""
         if self.pipeline and self.is_initialized:
-            self.pipeline.stop()
+            try:
+                self.pipeline.stop()
+            except Exception as e:
+                logger.debug(f"Camera pipeline stop error (ignored): {e}")
+        self.pipeline = None
+        self.align = None
+        self.intrinsics = None
         self.is_initialized = False
         logger.info("Camera cleanup complete")
 

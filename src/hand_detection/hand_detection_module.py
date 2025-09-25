@@ -43,7 +43,7 @@ class HandTracker:
 
     def __init__(self, telemetry: Telemetry, command_bus: CommandBus, camera_manager: CameraManager,
                  config: HandTrackingConfig = None):
-        
+
         self.config = config or HandTrackingConfig()
         self.telemetry = telemetry
         self.command_bus = command_bus
@@ -157,7 +157,8 @@ class HandTracker:
             self.is_running = True
             self._setup_detector()
 
-            self.processing_thread = threading.Thread(target=self.main_loop)
+            self.processing_thread = threading.Thread(
+                target=self.main_loop, daemon=True)
             self.processing_thread.start()
             logger.info(
                 "HandTracker started successfully in a background thread.")
@@ -185,79 +186,91 @@ class HandTracker:
         prev_time = time.time()
 
         while self.is_running:
-            # Get frames from shared camera manager
-            color_frame, depth_frame = self.camera_manager.get_frames()
-            if color_frame is None or depth_frame is None:
-                continue
+            try:
+                # Get frames from shared camera manager
+                color_frame, depth_frame = self.camera_manager.get_frames()
+                if color_frame is None or depth_frame is None:
+                    continue
 
-            # Process with MediaPipe
-            rgb_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(
-                image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            timestamp_ms = int(time.time() * 1000)
+                # Process with MediaPipe
+                rgb_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(
+                    image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+                timestamp_ms = int(time.time() * 1000)
 
-            self.landmarker.detect_async(mp_image, timestamp_ms)
+                self.landmarker.detect_async(mp_image, timestamp_ms)
 
-            # Process results
-            palm_pos = None
-            depth = 0
-            vector_3d = [0.0, 0.0, 0.0]
+                # Process results
+                palm_pos = None
+                depth = 0
+                vector_3d = [0.0, 0.0, 0.0]
 
-            if (self.latest_result and
-                self.latest_result.hand_landmarks and
-                    len(self.latest_result.hand_landmarks) > 0):
+                if (self.latest_result and
+                    self.latest_result.hand_landmarks and
+                        len(self.latest_result.hand_landmarks) > 0):
 
-                landmarks = self.latest_result.hand_landmarks[0]
-                centroid, radius = self._calculate_palm_centroid(landmarks)
+                    landmarks = self.latest_result.hand_landmarks[0]
+                    centroid, radius = self._calculate_palm_centroid(landmarks)
 
-                if centroid is not None:
-                    h, w = color_frame.shape[:2]
-                    palm_x = int(centroid[0] * w)
-                    palm_y = int(centroid[1] * h)
-                    pixel_radius = int(radius * min(w, h))
+                    if centroid is not None:
+                        h, w = color_frame.shape[:2]
+                        palm_x = int(centroid[0] * w)
+                        palm_y = int(centroid[1] * h)
+                        pixel_radius = int(radius * min(w, h))
 
-                    # Use shared camera manager for depth calculation
-                    depth = self.camera_manager.get_average_depth(
-                        depth_frame, (palm_x, palm_y), pixel_radius)
+                        # Use shared camera manager for depth calculation
+                        depth = self.camera_manager.get_average_depth(
+                            depth_frame, (palm_x, palm_y), pixel_radius)
 
-                    if depth > 0:
-                        # Use shared camera manager for 3D conversion
-                        vector_3d = self.camera_manager.pixel_to_3d(
-                            palm_x, palm_y, depth)
-                        self.telemetry.update_camera_vector(vector_3d)
+                        if depth > 0:
+                            # Use shared camera manager for 3D conversion
+                            vector_3d = self.camera_manager.pixel_to_3d(
+                                palm_x, palm_y, depth)
+                            self.telemetry.update_camera_vector(vector_3d)
 
-                        radius_vector = self.camera_manager.pixel_to_3d(
-                            palm_x - pixel_radius, palm_y, depth)
-                        actual_radius = vector_3d[0] - radius_vector[0]
-                        self.telemetry.update_radius(actual_radius)
-                        palm_pos = (palm_x, palm_y, pixel_radius)
-            else:
-                self.telemetry.update_camera_vector(vector_3d)
+                            radius_vector = self.camera_manager.pixel_to_3d(
+                                palm_x - pixel_radius, palm_y, depth)
+                            actual_radius = vector_3d[0] - radius_vector[0]
+                            self.telemetry.update_radius(actual_radius)
+                            palm_pos = (palm_x, palm_y, pixel_radius)
+                else:
+                    self.telemetry.update_camera_vector(vector_3d)
 
-            # Create display frame
-            display_frame = cv2.flip(color_frame, 1)
+                # Create display frame
+                display_frame = cv2.flip(color_frame, 1)
 
-            # Draw everything
-            landmarks = self.latest_result.hand_landmarks if self.latest_result else None
-            self._draw_results(display_frame, landmarks,
-                               palm_pos, depth, vector_3d)
+                # Draw everything
+                landmarks = self.latest_result.hand_landmarks if self.latest_result else None
+                self._draw_results(display_frame, landmarks,
+                                   palm_pos, depth, vector_3d)
 
-            # FPS
-            current_time = time.time()
-            fps = int(1.0 / (current_time - prev_time))
-            prev_time = current_time
-            cv2.putText(display_frame, f"FPS: {fps}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                # FPS
+                current_time = time.time()
+                fps = int(1.0 / (current_time - prev_time))
+                prev_time = current_time
+                cv2.putText(display_frame, f"FPS: {fps}", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-            # Display
-            cv2.imshow('Hand Tracking', display_frame)
-            cv2.waitKey(1)
+                # Display
+                cv2.imshow('Hand Tracking', display_frame)
+                key = cv2.waitKey(1)
+                # Check for Esc key to exit manually
+                if key == 27:  # ESC key
+                    self.is_running = False
+
+            except Exception as e:
+                logger.error(f"Error in hand tracking main loop: {e}")
+                self.is_running = False
+                break
+
+        # Clean up OpenCV windows in the same thread that created them
+        cv2.destroyAllWindows()
 
     def _cleanup(self):
         """Clean up resources."""
         if self.landmarker:
             self.landmarker.close()
-        cv2.destroyAllWindows()
+        # Note: cv2.destroyAllWindows() is now called in main_loop() thread
         logger.info("HandTracker cleanup complete")
 
 

@@ -88,9 +88,6 @@ class MockOPCServer:
                 # Set access level to read/write
                 await var_node.set_writable()
 
-                # Set write handler for joint write nodes
-                # Note: asyncua doesn't have set_write_handler, we'll handle this differently
-
                 self.joint_write_nodes[i] = var_node
                 logger.debug(f"Created joint write node: {node_name}")
 
