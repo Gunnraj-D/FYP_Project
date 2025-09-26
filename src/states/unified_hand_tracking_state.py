@@ -17,7 +17,7 @@ from camera_management.camera_transform_module import transform_camera_to_base
 from config.config import (
     HAND_STABILITY_TIME_THRESHOLD,
     HAND_STABILITY_THRESHOLD,
-    DISTANCE_TO_REMAIN_MM
+    DISTANCE_TO_REMAIN_M
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class UnifiedHandTrackingState(BaseState):
     This state:
     1. Activates the HandTracker module for continuous hand detection
     2. Moves the robot toward the hand centroid using command bus
-    3. Maintains DISTANCE_TO_REMAIN_MM height above the hand
+    3. Maintains DISTANCE_TO_REMAIN_M height above the hand
     4. Implements dead zone - no movement when within stability threshold
     5. Calculates placement pose when hand remains stable for threshold time
     6. Uses command bus for all robot movement commands
@@ -132,7 +132,7 @@ class UnifiedHandTrackingState(BaseState):
                     self.is_hand_stable = False
                     self.hand_stable_start_time = 0.0
                     logger.debug(
-                        f"Hand moved {distance:.1f}mm, resetting stability")
+                        f"Hand moved {distance:.3f}m, resetting stability")
 
             self.last_hand_position = hand_position.copy()
 
@@ -153,16 +153,17 @@ class UnifiedHandTrackingState(BaseState):
                 return
 
             # Calculate current TCP pose
-            current_tcp_pose = self.context.ik.solve_tcp(current_joints)
+            current_tcp_matrix, current_tcp_pose = self.context.ik.tcp_from_joints(
+                current_joints)
 
             # Transform hand position from camera to base frame
             hand_position_base = transform_camera_to_base(
-                hand_position, current_tcp_pose)
+                hand_position, current_tcp_matrix)
 
             # Calculate target position with height offset
             target_position = hand_position_base.copy()
-            # Add height offset in mm
-            target_position[2] += DISTANCE_TO_REMAIN_MM
+            # Add height offset in meters
+            target_position[2] += DISTANCE_TO_REMAIN_M
 
             # Calculate distance to target
             current_position = current_tcp_pose[:3]  # x, y, z
@@ -172,7 +173,7 @@ class UnifiedHandTrackingState(BaseState):
             # Dead zone check - don't move if within stability threshold
             if distance_to_target < HAND_STABILITY_THRESHOLD:
                 logger.debug(
-                    f"Within dead zone ({distance_to_target:.1f}mm), not moving")
+                    f"Within dead zone ({distance_to_target:.3f}m), not moving")
                 return
 
             # Solve inverse kinematics for target position
@@ -185,7 +186,7 @@ class UnifiedHandTrackingState(BaseState):
                 self.last_movement_time = current_time
                 logger.debug(
                     f"Moving toward hand: target joints {target_joints}")
-                logger.debug(f"Distance to target: {distance_to_target:.1f}mm")
+                logger.debug(f"Distance to target: {distance_to_target:.3f}m")
             else:
                 logger.warning(
                     "Failed to solve inverse kinematics for target position")
@@ -199,14 +200,14 @@ class UnifiedHandTrackingState(BaseState):
             # Get pickup height offset from telemetry
             pickup_height_offset = self.context.telemetry.get_pickup_height_offset()
 
-            # Convert hand position to meters if needed (assuming input is in mm)
-            hand_pos_mm = np.array(hand_position)
+            # Convert hand position to meters (assuming input is already in meters)
+            hand_pos_meters = np.array(hand_position)
 
             # Calculate placement pose by offsetting hand position upward
             # This ensures the robot places the object at a safe height above the palm
-            placement_pose = hand_pos_mm.copy()
-            placement_pose[2] += pickup_height_offset * \
-                1000.0  # Convert meters to mm
+            placement_pose = hand_pos_meters.copy()
+            # pickup_height_offset is already in meters
+            placement_pose[2] += pickup_height_offset
 
             # Add rotation components (maintain same orientation as handoff approach)
             full_placement_pose = list(

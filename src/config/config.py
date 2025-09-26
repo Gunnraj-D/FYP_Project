@@ -116,11 +116,11 @@ HAND_TRACKING_CONFIG = {
     'palm_indices': [0, 1, 2, 5, 9, 13, 17]
 }
 
-# Distance to maintain from hand (mm)
-DISTANCE_TO_REMAIN_MM = 250
+# Distance to maintain from hand (meters)
+DISTANCE_TO_REMAIN_M = 0.25  # 250mm converted to meters
 
 # How stable the hand should be to count as stable
-HAND_STABILITY_THRESHOLD = 20.0  # in mm
+HAND_STABILITY_THRESHOLD = 0.02  # 20mm converted to meters
 
 # How long the hand needs to remain within the threshold to count as stable
 HAND_STABILITY_TIME_THRESHOLD = 2.0  # in seconds

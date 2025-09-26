@@ -16,19 +16,19 @@ def transform_camera_to_base(camera_position: List[float], tcp_matrix: np.ndarra
     Transform position from camera frame to robot base frame.
 
     Args:
-        camera_position: [x, y, z] position in camera frame (mm)
+        camera_position: [x, y, z] position in camera frame (meters)
         tcp_matrix: 4x4 homogeneous transformation matrix from base to TCP
 
     Returns:
-        Position in robot base frame (mm)
+        Position in robot base frame (meters)
     """
     try:
         # Convert camera position to numpy array
         camera_pos = np.array(camera_position, dtype=float)
 
         # Create camera-to-TCP transformation matrix
-        # Camera translation relative to TCP (from config)
-        camera_translation = CAMERA_TRANSLATION * 1000  # Convert meters to mm
+        # Camera translation relative to TCP (from config, already in meters)
+        camera_translation = CAMERA_TRANSLATION
 
         # Camera rotation relative to TCP (from config)
         camera_rotation_euler = CAMERA_ROTATION_EULER
@@ -54,10 +54,9 @@ def transform_camera_to_base(camera_position: List[float], tcp_matrix: np.ndarra
         tcp_pos = tcp_pos_homogeneous[:3]
 
         # Transform TCP position to base frame
-        # Note: tcp_matrix is in meters, but tcp_pos is in mm, so we need to convert
-        tcp_pos_meters = tcp_pos / 1000.0  # Convert mm to meters
-        base_pos_homogeneous = tcp_matrix @ np.append(tcp_pos_meters, 1.0)
-        base_pos = base_pos_homogeneous[:3] * 1000.0  # Convert back to mm
+        # Both tcp_matrix and tcp_pos are now in meters
+        base_pos_homogeneous = tcp_matrix @ np.append(tcp_pos, 1.0)
+        base_pos = base_pos_homogeneous[:3]
 
         logger.debug(
             f"Camera position {camera_pos} -> Base position {base_pos}")
@@ -73,11 +72,11 @@ def transform_base_to_camera(base_position: List[float], tcp_matrix: np.ndarray)
     Transform position from robot base frame to camera frame.
 
     Args:
-        base_position: [x, y, z] position in base frame (mm)
+        base_position: [x, y, z] position in base frame (meters)
         tcp_matrix: 4x4 homogeneous transformation matrix from base to TCP
 
     Returns:
-        Position in camera frame (mm)
+        Position in camera frame (meters)
     """
     try:
         # Convert base position to numpy array
@@ -89,7 +88,7 @@ def transform_base_to_camera(base_position: List[float], tcp_matrix: np.ndarray)
         tcp_pos = tcp_pos_homogeneous[:3]
 
         # Create TCP-to-camera transformation matrix
-        camera_translation = CAMERA_TRANSLATION * 1000  # Convert meters to mm
+        camera_translation = CAMERA_TRANSLATION  # Already in meters
 
         camera_rotation_euler = CAMERA_ROTATION_EULER
         camera_rotation_rad = np.radians([

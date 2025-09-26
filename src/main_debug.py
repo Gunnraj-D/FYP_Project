@@ -252,11 +252,17 @@ class DebugSystemManager:
                 # Wait for server thread to finish
                 if self.mock_server_thread and self.mock_server_thread.is_alive():
                     self.mock_server_thread.join(
-                        timeout=3.0)  # Reduced timeout
+                        timeout=2.0)  # Reduced timeout
                     if self.mock_server_thread.is_alive():
                         print("⚠️ Mock server thread did not stop gracefully")
+                        # Force terminate if needed
+                        self.mock_server_thread = None
             except Exception as e:
                 print(f"❌ Error stopping mock server: {e}")
+
+        # Force cleanup of any remaining resources
+        self.mock_server = None
+        self.mock_server_thread = None
 
         print("✅ Debug system stopped")
 
@@ -344,6 +350,9 @@ class DebugSystemManager:
         except Exception as e:
             print(f"❌ Error executing state: {e}")
         finally:
+            # This block is GUARANTEED to run, ensuring cleanup.
+            print(f"Exiting state: {state.name}")
+            state.exit() # This will call hand_tracker.stop()
             self.execution_active = False
             print(f"✅ Completed: {state.name}")
 
@@ -427,9 +436,11 @@ class DebugSystemManager:
                     self.force_complete_execution()
                     if self.current_execution_thread and self.current_execution_thread.is_alive():
                         print("⚠️ Waiting for execution thread to stop...")
-                        self.current_execution_thread.join(timeout=2.0)
+                        self.current_execution_thread.join(timeout=1.0)
                         if self.current_execution_thread.is_alive():
                             print("⚠️ Execution thread did not stop gracefully")
+                        self.current_execution_thread = None
+                    self.running = False
                     break
                 elif command == "states":
                     self._show_available_states()

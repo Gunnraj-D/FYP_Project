@@ -100,7 +100,7 @@ class CameraManager:
             return None, None
 
     def pixel_to_3d(self, x: int, y: int, depth: float) -> Tuple[float, float, float]:
-        """Convert pixel coordinates to 3D vector in millimeters."""
+        """Convert pixel coordinates to 3D vector in meters."""
         if not self.intrinsics or depth <= 0:
             return (0.0, 0.0, 0.0)
 
@@ -108,8 +108,8 @@ class CameraManager:
             point_3d = rs.rs2_deproject_pixel_to_point(
                 self.intrinsics, [x, y], depth
             )
-            # Convert from meters to millimeters
-            return (point_3d[0] * 1000, point_3d[1] * 1000, point_3d[2] * 1000)
+            # Return coordinates in meters (RealSense already provides meters)
+            return (point_3d[0], point_3d[1], point_3d[2])
         except Exception as e:
             logger.error(f"3D conversion error: {e}")
             return (0.0, 0.0, 0.0)

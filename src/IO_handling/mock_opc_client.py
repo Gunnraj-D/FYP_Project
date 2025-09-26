@@ -92,7 +92,8 @@ class MockOPCClient:
             if self.comm_thread and self.comm_thread.is_alive():
                 self.comm_thread.join(timeout=3.0)
                 if self.comm_thread.is_alive():
-                    logger.warning("Mock OPC client thread did not stop gracefully")
+                    logger.warning(
+                        "Mock OPC client thread did not stop gracefully")
         logger.info("Mock OPC UA client stopped")
 
     def _run_async_loop(self):
@@ -123,41 +124,47 @@ class MockOPCClient:
                     with self._lock:
                         self.connected = True
                         self._reconnect_attempts = 0
-                    
-                    self.telemetry.update_robot_status({'connected': True, 'status_code': 0})
-                    logger.info("✅ Mock OPC client connected, starting communication loop")
-                    
+
+                    self.telemetry.update_robot_status(
+                        {'connected': True, 'status_code': 0})
+                    logger.info(
+                        "✅ Mock OPC client connected, starting communication loop")
+
                     await self._communication_loop()
 
                     # --- SOLUTION PART 1: Stop the program before disconnecting ---
                     # When the communication loop finishes (because self.running is False),
                     # stop the robot program while the connection is still active.
-                    logger.info("Communication loop ended. Stopping robot program...")
+                    logger.info(
+                        "Communication loop ended. Stopping robot program...")
                     await self._stop_robot_program()
 
             except (ConnectionRefusedError, asyncio.TimeoutError) as e:
                 logger.warning(f"Mock OPC UA connection failed: {e}")
             except Exception as e:
-                logger.error(f"Mock OPC UA main loop error: {e}", exc_info=True)
+                logger.error(
+                    f"Mock OPC UA main loop error: {e}", exc_info=True)
             finally:
                 with self._lock:
                     self.connected = False
-                
+
                 if self.running and not self._shutdown_event.is_set():
                     self._reconnect_attempts += 1
                     if self._reconnect_attempts >= self.config.max_reconnect_attempts:
-                        logger.error(f"Max reconnection attempts ({self.config.max_reconnect_attempts}) reached. Stopping client.")
+                        logger.error(
+                            f"Max reconnection attempts ({self.config.max_reconnect_attempts}) reached. Stopping client.")
                         self.running = False
                         break
-                    
-                    wait_time = min(self.config.reconnect_delay * (2 ** self._reconnect_attempts), 10.0)
-                    logger.info(f"Reconnecting in {wait_time:.1f}s (attempt {self._reconnect_attempts})")
+
+                    wait_time = min(self.config.reconnect_delay *
+                                    (2 ** self._reconnect_attempts), 10.0)
+                    logger.info(
+                        f"Reconnecting in {wait_time:.1f}s (attempt {self._reconnect_attempts})")
                     await asyncio.sleep(wait_time)
-        
+
         # --- SOLUTION PART 2: Simplify cleanup ---
         # The cleanup logic is now handled at the end of the connection block.
         logger.info("Mock OPC client main loop finished.")
-
 
     async def _initialize_nodes(self):
         """Initialize OPC UA node references."""
@@ -198,15 +205,19 @@ class MockOPCClient:
             raise
 
     async def _start_robot_program(self):
-        """Start the robot control program."""
+        """Start the robot control program using batch operations."""
         try:
-            # Set program ID (1 for joint control mode)
-            program_id = ua.Variant(1, ua.VariantType.Int32)
-            await self.control_nodes['prog_id'].write_value(program_id)
+            # Prepare nodes and values for batch write
+            nodes_to_write = [self.control_nodes['prog_id'],
+                              self.control_nodes['start']]
+            values_to_write = [
+                # program ID (1 for joint control mode)
+                ua.Variant(1, ua.VariantType.Int32),
+                ua.Variant(True, ua.VariantType.Boolean)  # start program
+            ]
 
-            # Start the program
-            start = ua.Variant(True, ua.VariantType.Boolean)
-            await self.control_nodes['start'].write_value(start)
+            # Perform batch write for control commands
+            await self.client.write_values(nodes_to_write, values_to_write)
 
             # Initialize joint values to home position
             await self._initialize_joint_values()
@@ -217,16 +228,28 @@ class MockOPCClient:
             logger.error(f"Failed to start mock robot program: {e}")
 
     async def _initialize_joint_values(self):
-        """Initialize joint values to home position."""
+        """Initialize joint values to home position using batch operations."""
         try:
             # Set initial joint values to home position
             home_joints = [0.5, -1.0, 0.5, -2.0, 0.5, 1.5, 0.5]
+
+            # Prepare nodes and values for batch write
+            nodes_to_write = []
+            values_to_write = []
+
+            # Add both write nodes and read nodes for proper initialization
             for i in range(1, 8):
                 joint_value = ua.Variant(
                     home_joints[i-1], ua.VariantType.Double)
-                # Write to both write nodes and read nodes for proper initialization
-                await self.joint_write_nodes[i].write_value(joint_value)
-                await self.joint_read_nodes[i].write_value(joint_value)
+                # Write nodes (target positions)
+                nodes_to_write.append(self.joint_write_nodes[i])
+                values_to_write.append(joint_value)
+                # Read nodes (current positions for instantaneous simulation)
+                nodes_to_write.append(self.joint_read_nodes[i])
+                values_to_write.append(joint_value)
+
+            # Perform batch write for all joint nodes
+            await self.client.write_values(nodes_to_write, values_to_write)
 
             # Update telemetry with initial values
             self.telemetry.update_current_joints(home_joints)
@@ -237,18 +260,29 @@ class MockOPCClient:
             logger.error(f"Failed to initialize joint values: {e}")
 
     async def _stop_robot_program(self):
-        """Stop the robot control program."""
+        """Stop the robot control program using batch operations."""
         try:
             if self.client and self.connected:
                 logger.info("Writing 'stop' to robot program...")
-                await self.control_nodes['start'].write_value(ua.Variant(False, ua.VariantType.Boolean))
-                await self.control_nodes['prog_id'].write_value(ua.Variant(0, ua.VariantType.Int32))
+
+                # Prepare nodes and values for batch write
+                nodes_to_write = [self.control_nodes['start'],
+                                  self.control_nodes['prog_id']]
+                values_to_write = [
+                    ua.Variant(False, ua.VariantType.Boolean),  # stop program
+                    ua.Variant(0, ua.VariantType.Int32)  # reset program ID
+                ]
+
+                # Perform batch write for stop commands
+                await self.client.write_values(nodes_to_write, values_to_write)
                 logger.info("Mock robot program stopped successfully.")
             else:
-                logger.warning("Cannot stop robot program, client is not connected.")
+                logger.warning(
+                    "Cannot stop robot program, client is not connected.")
         except Exception as e:
             # This error is now less likely but we keep the catch for robustness
-            logger.error(f"Failed to stop mock robot program during shutdown: {e}")
+            logger.error(
+                f"Failed to stop mock robot program during shutdown: {e}")
 
     async def _communication_loop(self):
         """Main communication loop with telemetry updates and command processing."""
@@ -281,21 +315,54 @@ class MockOPCClient:
                     f"Mock OPC loop exceeded target interval by {elapsed - loop_interval:.3f}s")
 
     async def _update_telemetry(self):
-        """Read robot state and update telemetry store."""
+        """Read robot state and update telemetry store using batch operations."""
         try:
-            # Read current joint positions
-            current_joints = await self._read_joint_positions()
-            if current_joints:
-                self.telemetry.update_current_joints(current_joints)
+            # Prepare all nodes for batch read
+            nodes_to_read = []
+            node_types = []
 
-            # Read robot status
-            status = await self._read_robot_status()
-            if status:
-                self.telemetry.update_robot_status(status)
+            # Add joint read nodes
+            for i in range(1, 8):
+                nodes_to_read.append(self.joint_read_nodes[i])
+                node_types.append('joint')
 
-            # Read gripper status
-            gripper_status = await self._read_gripper_status()
-            if gripper_status:
+            # Add robot status node
+            nodes_to_read.append(self.control_nodes['status'])
+            node_types.append('status')
+
+            # Add gripper current node
+            if 'gripper_current' in self.control_nodes:
+                nodes_to_read.append(self.control_nodes['gripper_current'])
+                node_types.append('gripper')
+
+            # Perform batch read
+            values = await self.client.read_values(nodes_to_read)
+
+            # Process results
+            joint_values = []
+            status_value = None
+            gripper_value = None
+
+            for i, (value, node_type) in enumerate(zip(values, node_types)):
+                if node_type == 'joint':
+                    joint_values.append(float(value))
+                elif node_type == 'status':
+                    status_value = value
+                elif node_type == 'gripper':
+                    gripper_value = value
+
+            # Update telemetry with batch results
+            if joint_values:
+                self.telemetry.update_current_joints(joint_values)
+
+            if status_value is not None:
+                self.telemetry.update_robot_status({
+                    'connected': True,
+                    'status_code': int(status_value)
+                })
+
+            if gripper_value is not None:
+                gripper_status = "close" if bool(gripper_value) else "open"
                 self.telemetry.update_current_gripper_status(gripper_status)
 
         except Exception as e:
@@ -338,7 +405,7 @@ class MockOPCClient:
 
     async def _write_joint_positions(self, joint_positions: List[float]):
         """
-        Write joint positions with instantaneous movement simulation.
+        Write joint positions with instantaneous movement simulation using batch operations.
         This is the key difference from the original client - we simulate
         instantaneous movement by setting current = target immediately.
         """
@@ -353,21 +420,26 @@ class MockOPCClient:
                 self._last_joint_values = joint_positions.copy()
 
         try:
-            # Write to target nodes (R1c_Joi1-7)
-            for i in range(1, 8):
-                if i <= len(joint_positions):
-                    value = ua.Variant(
-                        float(joint_positions[i-1]), ua.VariantType.Double)
-                    await self.joint_write_nodes[i].write_value(value)
+            # Prepare nodes and values for batch write
+            nodes_to_write = []
+            values_to_write = []
 
-            # INSTANTANEOUS MOVEMENT SIMULATION:
-            # Immediately write the same values to current nodes (R1d_Joi1-7)
-            # This simulates instantaneous robot movement
+            # Prepare write nodes (R1c_Joi1-7) - target positions
             for i in range(1, 8):
                 if i <= len(joint_positions):
-                    value = ua.Variant(
-                        float(joint_positions[i-1]), ua.VariantType.Double)
-                    await self.joint_read_nodes[i].write_value(value)
+                    nodes_to_write.append(self.joint_write_nodes[i])
+                    values_to_write.append(ua.Variant(
+                        float(joint_positions[i-1]), ua.VariantType.Double))
+
+            # Prepare read nodes (R1d_Joi1-7) - current positions for instantaneous simulation
+            for i in range(1, 8):
+                if i <= len(joint_positions):
+                    nodes_to_write.append(self.joint_read_nodes[i])
+                    values_to_write.append(ua.Variant(
+                        float(joint_positions[i-1]), ua.VariantType.Double))
+
+            # Perform batch write for all joint nodes
+            await self.client.write_values(nodes_to_write, values_to_write)
 
             # Update telemetry with the new current joint positions for instantaneous movement
             self.telemetry.update_current_joints(joint_positions)
@@ -378,7 +450,7 @@ class MockOPCClient:
             logger.error(f"Failed to write joint positions: {e}")
 
     async def _write_gripper_status(self, status: str):
-        """Write gripper status with redundant write detection and instantaneous simulation."""
+        """Write gripper status with redundant write detection and instantaneous simulation using batch operations."""
         if not self.connected or not self.client:
             return
 
@@ -393,25 +465,31 @@ class MockOPCClient:
             # "open" = False (gripper open), "close" = True (gripper closed)
             gripper_value = status.lower() == "close"
 
-            # Write to gripper control node
+            # Prepare nodes and values for batch write
+            nodes_to_write = []
+            values_to_write = []
+
+            # Add gripper control node
             if 'gripper_control' in self.control_nodes:
-                value = ua.Variant(gripper_value, ua.VariantType.Boolean)
-                await self.control_nodes['gripper_control'].write_value(value)
-                logger.debug(
-                    f"Wrote gripper control: {gripper_value} (status: {status})")
+                nodes_to_write.append(self.control_nodes['gripper_control'])
+                values_to_write.append(ua.Variant(
+                    gripper_value, ua.VariantType.Boolean))
             else:
                 logger.warning("Gripper control node not available")
 
-            # INSTANTANEOUS MOVEMENT SIMULATION:
-            # Immediately write the same value to current gripper state
-            # This simulates instantaneous gripper movement
+            # Add gripper current node for instantaneous simulation
             if 'gripper_current' in self.control_nodes:
-                value = ua.Variant(gripper_value, ua.VariantType.Boolean)
-                await self.control_nodes['gripper_current'].write_value(value)
-                logger.debug(
-                    f"Updated gripper current state: {gripper_value} (status: {status})")
+                nodes_to_write.append(self.control_nodes['gripper_current'])
+                values_to_write.append(ua.Variant(
+                    gripper_value, ua.VariantType.Boolean))
             else:
                 logger.warning("Gripper current node not available")
+
+            # Perform batch write for gripper nodes
+            if nodes_to_write:
+                await self.client.write_values(nodes_to_write, values_to_write)
+                logger.debug(
+                    f"Wrote gripper control and current: {gripper_value} (status: {status})")
 
         except Exception as e:
             logger.error(f"Failed to write gripper status: {e}")
@@ -432,48 +510,20 @@ class MockOPCClient:
             logger.error(f"Failed to handle emergency stop: {e}")
 
     async def _read_joint_positions(self) -> Optional[List[float]]:
-        """Read current joint positions from robot."""
+        """Read current joint positions from robot using batch read."""
         try:
-            current_joints = []
-            for i in range(1, 8):
-                value = await self.joint_read_nodes[i].read_value()
-                current_joints.append(float(value))
+            # Prepare nodes for batch read
+            nodes_to_read = [self.joint_read_nodes[i] for i in range(1, 8)]
+
+            # Perform batch read
+            values = await self.client.read_values(nodes_to_read)
+
+            # Convert to float list
+            current_joints = [float(value) for value in values]
             return current_joints
 
         except Exception as e:
             logger.error(f"Failed to read joint positions: {e}")
-            return None
-
-    async def _read_robot_status(self) -> Optional[Dict[str, Any]]:
-        """Read robot status information."""
-        try:
-            status = await self.control_nodes['status'].read_value()
-            return {
-                'connected': True,
-                'status_code': int(status)
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to read robot status: {e}")
-            return {
-                'connected': False,
-                'status_code': -1,
-                'error_message': str(e)
-            }
-
-    async def _read_gripper_status(self) -> Optional[str]:
-        """Read current gripper status from robot."""
-        try:
-            if 'gripper_current' in self.control_nodes:
-                gripper_value = await self.control_nodes['gripper_current'].read_value()
-                # Convert boolean to string: True = "close", False = "open"
-                return "close" if bool(gripper_value) else "open"
-            else:
-                logger.warning("Gripper current node not available")
-                return None
-
-        except Exception as e:
-            logger.error(f"Failed to read gripper status: {e}")
             return None
 
     async def _cleanup(self):
