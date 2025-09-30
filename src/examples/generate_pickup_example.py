@@ -13,7 +13,7 @@ from states.context import StateContext
 from states.generate_pickup_state import GeneratePickupState
 from config.config import (
     URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS,
-    OPC_SERVER_URL, OPC_OBJECTS_NAME, OPC_ROBOT_NAME
+    OPC_SERVER_URL, OPC_OBJECTS_NAME, ROBOT_ID, get_robot_name
 )
 
 # Setup logging

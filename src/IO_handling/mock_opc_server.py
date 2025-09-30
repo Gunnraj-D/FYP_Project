@@ -19,10 +19,19 @@ class MockOPCServer:
     Provides the exact node structure expected by the original opc_client.py.
     """
 
-    def __init__(self, url: str = "opc.tcp://127.0.0.1:4840/"):
+    def __init__(self, url: str = "opc.tcp://127.0.0.1:4840/", robot_id: int = 1):
         self.url = url
+        self.robot_id = robot_id
         self.server = Server()
         self.server.set_endpoint(url)
+
+        # Validate robot ID
+        if not (1 <= robot_id <= 4):
+            raise ValueError(
+                f"Robot ID must be between 1 and 4, got {robot_id}")
+
+        # Calculate namespace based on robot ID
+        self.namespace = 20 + robot_id  # Robot 1->21, Robot 2->22, etc.
 
         # Robot state
         self.joint_write_values: List[float] = [
@@ -69,13 +78,16 @@ class MockOPCServer:
             # Get the Objects folder (equivalent to "0:Objects")
             objects = self.server.get_objects_node()
 
-            # Create robot1 object (equivalent to "22:robot1")
-            robot_obj = await objects.add_object("ns=2;i=22", "robot1")
+            # Create robot object with dynamic namespace and name
+            robot_name = f"robot{self.robot_id}"
+            # Use robot ID as the object ID for clarity
+            robot_obj = await objects.add_object(f"ns={self.namespace};i={self.robot_id}", robot_name)
 
-            # Create joint write nodes (R1c_Joi1 to R1c_Joi7) - Target positions
+            # Create joint write nodes (R{robot_id}c_Joi1 to R{robot_id}c_Joi7) - Target positions
             for i in range(1, 8):
-                node_name = f"R1c_Joi{i}"
-                node_id = f"ns=2;i={1000 + i}"  # Unique node IDs
+                node_name = f"R{self.robot_id}c_Joi{i}"
+                # Use string identifier with node name
+                node_id = f"ns={self.namespace};s={node_name}"
 
                 # Create variable node for joint target position
                 var_node = await robot_obj.add_variable(
@@ -91,10 +103,11 @@ class MockOPCServer:
                 self.joint_write_nodes[i] = var_node
                 logger.debug(f"Created joint write node: {node_name}")
 
-            # Create joint read nodes (R1d_Joi1 to R1d_Joi7) - Current positions
+            # Create joint read nodes (R{robot_id}d_Joi1 to R{robot_id}d_Joi7) - Current positions
             for i in range(1, 8):
-                node_name = f"R1d_Joi{i}"
-                node_id = f"ns=2;i={2000 + i}"  # Unique node IDs
+                node_name = f"R{self.robot_id}d_Joi{i}"
+                # Use string identifier with node name
+                node_id = f"ns={self.namespace};s={node_name}"
 
                 # Create variable node for joint current position
                 var_node = await robot_obj.add_variable(
@@ -111,60 +124,69 @@ class MockOPCServer:
                 logger.debug(f"Created joint read node: {node_name}")
 
             # Create control nodes
-            # R1c_Start - Boolean control flag
+            # R{robot_id}c_Start - Boolean control flag
+            start_node_name = f"R{self.robot_id}c_Start"
             start_node = await robot_obj.add_variable(
-                "ns=2;i=3001",
-                "R1c_Start",
+                f"ns={self.namespace};s={start_node_name}",
+                start_node_name,
                 ua.Variant(self.start_flag, ua.VariantType.Boolean)
             )
             # Data type is already set when creating the variable
             await start_node.set_writable()
             self.control_nodes['start'] = start_node
 
-            # R1c_ProgID - Program ID (Integer)
+            # R{robot_id}c_ProgID - Program ID (Integer)
+            prog_id_node_name = f"R{self.robot_id}c_ProgID"
             prog_id_node = await robot_obj.add_variable(
-                "ns=2;i=3002",
-                "R1c_ProgID",
+                f"ns={self.namespace};s={prog_id_node_name}",
+                prog_id_node_name,
                 ua.Variant(self.prog_id, ua.VariantType.Int32)
             )
             # Data type is already set when creating the variable
             await prog_id_node.set_writable()
             self.control_nodes['prog_id'] = prog_id_node
 
-            # R1d_Status - Robot status (Integer)
+            # R{robot_id}d_Status - Robot status (Integer)
+            status_node_name = f"R{self.robot_id}d_Status"
             status_node = await robot_obj.add_variable(
-                "ns=2;i=3003",
-                "R1d_Status",
+                f"ns={self.namespace};s={status_node_name}",
+                status_node_name,
                 ua.Variant(self.status, ua.VariantType.Int32)
             )
             # Data type is already set when creating the variable
             await status_node.set_writable()  # Make writable for mock simulation
             self.control_nodes['status'] = status_node
 
-            # R1c_GripperAct - Gripper control (Boolean)
+            # R{robot_id}c_GripperAct - Gripper control (Boolean)
+            gripper_control_node_name = f"R{self.robot_id}c_GripperAct"
             gripper_control_node = await robot_obj.add_variable(
-                "ns=2;i=3004",
-                "R1c_GripperAct",
+                f"ns={self.namespace};s={gripper_control_node_name}",
+                gripper_control_node_name,
                 ua.Variant(self.gripper_control, ua.VariantType.Boolean)
             )
             await gripper_control_node.set_writable()
             self.control_nodes['gripper_control'] = gripper_control_node
 
-            # R1d_GripperAct - Gripper current state (Boolean)
+            # R{robot_id}d_GripperAct - Gripper current state (Boolean)
+            gripper_current_node_name = f"R{self.robot_id}d_GripperAct"
             gripper_current_node = await robot_obj.add_variable(
-                "ns=2;i=3005",
-                "R1d_GripperAct",
+                f"ns={self.namespace};s={gripper_current_node_name}",
+                gripper_current_node_name,
                 ua.Variant(self.gripper_current, ua.VariantType.Boolean)
             )
             await gripper_current_node.set_writable()  # Make writable for mock simulation
             self.control_nodes['gripper_current'] = gripper_current_node
 
-            logger.info("Robot object structure created successfully")
             logger.info(
-                f"Created {len(self.joint_write_nodes)} joint write nodes")
+                f"Robot {self.robot_id} object structure created successfully")
             logger.info(
-                f"Created {len(self.joint_read_nodes)} joint read nodes")
-            logger.info(f"Created {len(self.control_nodes)} control nodes")
+                f"Created {len(self.joint_write_nodes)} joint write nodes for robot {self.robot_id}")
+            logger.info(
+                f"Created {len(self.joint_read_nodes)} joint read nodes for robot {self.robot_id}")
+            logger.info(
+                f"Created {len(self.control_nodes)} control nodes for robot {self.robot_id}")
+            logger.info(
+                f"Using namespace {self.namespace} for robot {self.robot_id}")
 
         except Exception as e:
             logger.error(f"Failed to create robot structure: {e}")
@@ -332,15 +354,16 @@ class MockOPCServer:
         return self.running
 
 
-async def run_mock_server():
+async def run_mock_server(robot_id: int = 1):
     """Run the mock OPC UA server."""
-    server = MockOPCServer()
+    server = MockOPCServer(robot_id=robot_id)
 
     try:
         await server.initialize()
         await server.start_server()
 
-        logger.info("Mock OPC UA server is running. Press Ctrl+C to stop.")
+        logger.info(
+            f"Mock OPC UA server for robot {robot_id} is running. Press Ctrl+C to stop.")
 
         # Keep server running
         while server.is_running():
@@ -355,11 +378,32 @@ async def run_mock_server():
 
 
 if __name__ == "__main__":
+    import sys
+
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
+    # Get robot ID from command line argument or use default
+    robot_id = 1
+    if len(sys.argv) > 1:
+        try:
+            robot_id = int(sys.argv[1])
+            if not (1 <= robot_id <= 4):
+                print(
+                    f"Error: Robot ID must be between 1 and 4, got {robot_id}")
+                sys.exit(1)
+        except ValueError:
+            print(
+                f"Error: Invalid robot ID '{sys.argv[1]}'. Must be an integer between 1 and 4.")
+            sys.exit(1)
+
+    print(f"Starting mock OPC UA server for robot {robot_id}...")
+    print(f"Robot {robot_id} will use namespace {20 + robot_id}")
+    print(
+        f"Node names will follow pattern: R{robot_id}d_Status, R{robot_id}c_Joi1, etc.")
+
     # Run the server
-    asyncio.run(run_mock_server())
+    asyncio.run(run_mock_server(robot_id))

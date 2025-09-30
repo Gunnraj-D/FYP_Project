@@ -24,7 +24,7 @@ from states.base_state import BaseState
 # Configuration
 from config.config import (
     LOOP_RATE_MS, URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS,
-    OPC_SERVER_URL, OPC_OBJECTS_NAME, OPC_ROBOT_NAME, GGCNN2_MODEL_PATH
+    OPC_SERVER_URL, OPC_OBJECTS_NAME, GGCNN2_MODEL_PATH, ROBOT_ID, get_robot_name
 )
 
 logging.basicConfig(level=logging.INFO)

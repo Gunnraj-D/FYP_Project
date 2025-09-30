@@ -11,10 +11,10 @@ Controls:
     SPACEBAR - Capture current frame and run GG-CNN2 inference
     ESC or 'q' - Exit the application
 
-Make sure to set VISUAL_DEBUG_MODE = True in config.py before running.
+Make sure to set DEBUG_MODE = True in config.py before running.
 """
 
-from config.config import VISUAL_DEBUG_MODE, URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS, PRE_PICKUP_POSE
+from config.config import DEBUG_MODE, DEBUG_CONFIG, URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS, PRE_PICKUP_POSE
 from object_detection.ggcnn2_module import GGcnn2Module
 from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus
@@ -30,6 +30,14 @@ from pathlib import Path
 # Add src directory to path
 src_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(src_dir))
+
+# Add project root to path for imports
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Ensure we can import from src
+os.environ['PYTHONPATH'] = str(
+    src_dir) + os.pathsep + os.environ.get('PYTHONPATH', '')
 
 
 # Configure logging
@@ -68,14 +76,30 @@ def create_components():
     return telemetry, command_bus, camera_manager, kinematics_solver
 
 
-def display_camera_feed(camera_manager, window_name="Camera Feed"):
+def display_camera_feed(camera_manager, window_name=None):
     """
-    Display live camera feed with instructions.
+    Display live camera feed with instructions using new debug configuration.
 
     Returns:
         tuple: (color_frame, depth_frame) when spacebar is pressed, None otherwise
     """
+    # Use debug config for window name and settings
+    if window_name is None:
+        window_name = DEBUG_CONFIG.get(
+            'window_title', 'Debug Feed - Press SPACEBAR to process frame')
+
+    show_live_feed = DEBUG_CONFIG.get('show_live_feed', True)
+    frame_selection_enabled = DEBUG_CONFIG.get('frame_selection_enabled', True)
+
+    if not show_live_feed:
+        print("Live feed display is disabled in debug configuration")
+        return None, None
+
     print("Camera feed started. Press SPACEBAR to capture frame, ESC or 'q' to exit")
+    if frame_selection_enabled:
+        print("Frame selection is ENABLED - you can choose which frames to process")
+    else:
+        print("Frame selection is DISABLED - all frames will be processed automatically")
 
     while True:
         try:
@@ -118,13 +142,22 @@ def display_camera_feed(camera_manager, window_name="Camera Feed"):
             # Create side-by-side display
             display_image = np.hstack([color_array, depth_colored])
 
-            # Add instructions text
-            cv2.putText(display_image, "Press SPACEBAR to capture frame",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(display_image, "Press ESC or 'q' to exit",
-                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(display_image, "Left: Color | Right: Depth",
-                        (10, display_image.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            # Add instructions text using debug config
+            instructions = [
+                "DEBUG MODE - Frame Selection",
+                "Press SPACEBAR to capture frame",
+                "Press ESC or 'q' to exit",
+                f"Frame Selection: {'Enabled' if frame_selection_enabled else 'Disabled'}",
+                "Left: Color | Right: Depth"
+            ]
+
+            y_offset = 30
+            for i, text in enumerate(instructions):
+                color = (0, 255, 0) if i == 0 else (255, 255, 255)
+                thickness = 2 if i == 0 else 1
+                cv2.putText(display_image, text, (10, y_offset),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, thickness)
+                y_offset += 25
 
             # Display the image
             cv2.imshow(window_name, display_image)
@@ -145,20 +178,69 @@ def display_camera_feed(camera_manager, window_name="Camera Feed"):
             return None, None
 
 
+def demonstrate_debug_config():
+    """Demonstrate the new debug configuration features."""
+    print("\nDebug Configuration Features:")
+    print("-" * 30)
+
+    if DEBUG_MODE:
+        print("✓ Debug mode is ENABLED")
+
+        # Show current debug configuration
+        print("\nCurrent Debug Settings:")
+        for key, value in DEBUG_CONFIG.items():
+            status = "✓" if value else "✗"
+            print(f"  {status} {key}: {value}")
+
+        # Show what features are available
+        print("\nAvailable Features:")
+        if DEBUG_CONFIG.get('show_live_feed', True):
+            print("  ✓ Live camera feed display")
+        else:
+            print("  ✗ Live camera feed display (disabled)")
+
+        if DEBUG_CONFIG.get('frame_selection_enabled', True):
+            print("  ✓ Frame selection with spacebar")
+        else:
+            print("  ✗ Frame selection (disabled - all frames processed)")
+
+        print(
+            f"  ✓ Window title: '{DEBUG_CONFIG.get('window_title', 'Default')}'")
+        print(
+            f"  ✓ Quality threshold: {DEBUG_CONFIG.get('display_quality_threshold', 0.1)}")
+
+        print("\nHow to modify debug settings:")
+        print("  - Edit DEBUG_CONFIG in src/config/config.py")
+        print("  - Or modify settings at runtime (see example below)")
+
+        # Show example of runtime modification
+        print("\nExample: Modifying debug settings at runtime")
+        print("  DEBUG_CONFIG['show_live_feed'] = False  # Disable live feed")
+        print(
+            "  DEBUG_CONFIG['frame_selection_enabled'] = False  # Auto-process all frames")
+        print(
+            "  DEBUG_CONFIG['window_title'] = 'My Custom Title'  # Custom window title")
+    else:
+        print("✗ Debug mode is DISABLED")
+        print("  Set DEBUG_MODE = True in config.py to enable features")
+
+
 def main():
     """Main function to demonstrate GG-CNN2 debugging with real camera."""
 
     print("GG-CNN2 Visual Debugging Example with RealSense Camera")
     print("=" * 55)
 
+    # Demonstrate debug configuration
+    demonstrate_debug_config()
+
     # Check if debug mode is enabled
-    if not VISUAL_DEBUG_MODE:
-        print("WARNING: VISUAL_DEBUG_MODE is set to False in config.py")
-        print("Please set VISUAL_DEBUG_MODE = True to see visualizations")
+    if not DEBUG_MODE:
+        print("\nWARNING: DEBUG_MODE is set to False in config.py")
+        print("Please set DEBUG_MODE = True to see visualizations")
         print("Continuing without visualizations...")
     else:
-        print("Visual debug mode is ENABLED")
-        print("You will see debug windows when processing frames:")
+        print("\nYou will see debug windows when processing frames:")
         print("1. 'GG-CNN2 Input Frame' - Shows the processed depth image")
         print("2. 'GG-CNN2 Grasp Output' - Shows the detected grasp pose")
 
@@ -214,7 +296,7 @@ def main():
                 print(
                     f"Grasp width: {grasp_result['grasp_2d']['width']:.1f}px")
 
-                if VISUAL_DEBUG_MODE:
+                if DEBUG_MODE:
                     print("Check the debug windows for visualization!")
                     print("Press any key in the debug windows to continue...")
                     cv2.waitKey(0)

@@ -9,8 +9,16 @@ from pathlib import Path
 # DEBUG CONFIGURATION
 # ============================================================================
 
-# Visual debugging mode for GG-CNN2 grasp detection
-VISUAL_DEBUG_MODE = True
+# Debug mode for GG-CNN2 grasp detection and frame selection
+DEBUG_MODE = True
+
+# Debug mode settings
+DEBUG_CONFIG = {
+    'show_live_feed': True,           # Show live camera feed in debug mode
+    'frame_selection_enabled': True,  # Allow spacebar to select frames for processing
+    'window_title': 'Debug Feed - Press SPACEBAR to process frame',
+    'display_quality_threshold': 0.1,  # Minimum quality to show in debug display
+}
 
 # ============================================================================
 # CONFIG VARIABLES
@@ -32,7 +40,6 @@ LOOP_RATE_MS = 20  # 50Hz control loop
 # OPC UA Server connection
 OPC_SERVER_URL = "opc.tcp://172.24.200.1:4840/"
 OPC_OBJECTS_NAME = "0:Objects"
-OPC_ROBOT_NAME = "22:robot1"  # Assuming robot1 based on R1c/R1d naming
 
 # OPC UA communication rate
 OPC_UPDATE_INTERVAL_SECONDS = 0.05  # 20Hz update rate
@@ -48,11 +55,30 @@ OPC_MAX_RECONNECT_ATTEMPTS = 5  # Maximum reconnection attempts
 # OPC UA Mode Configuration
 OPC_MODE = "real"  # Options: "real", "mock"
 # URL for mock server (different port)
-OPC_MOCK_SERVER_URL = "opc.tcp://127.0.0.1:4841/"
+OPC_MOCK_SERVER_URL = "opc.tcp://127.0.0.1:4840/"
 
 # ============================================================================
 # ROBOT CONFIGURATION
 # ============================================================================
+
+# Robot ID configuration (1-4)
+# Robot ID determines namespace and node naming:
+# Robot 1 -> namespace 21, nodes like R1d_Status, R1c_Joi1, etc.
+# Robot 2 -> namespace 22, nodes like R2d_Status, R2c_Joi1, etc.
+# Robot 3 -> namespace 23, nodes like R3d_Status, R3c_Joi1, etc.
+# Robot 4 -> namespace 24, nodes like R4d_Status, R4c_Joi1, etc.
+ROBOT_ID = 3  # Default to robot 1, can be changed to 1, 2, 3, or 4
+
+
+def get_robot_name(robot_id: int = ROBOT_ID) -> str:
+    """Get the robot name based on robot ID."""
+    return f"{20 + robot_id}:robot{robot_id}"
+
+
+def get_robot_namespace(robot_id: int = ROBOT_ID) -> int:
+    """Get the robot namespace based on robot ID."""
+    return 20 + robot_id
+
 
 # KUKA iiwa14 URDF model
 URDF_FILEPATH = SRC_DIR / "resources" / "robot_models" / \

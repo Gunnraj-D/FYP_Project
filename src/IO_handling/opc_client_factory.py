@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from control.command_bus import CommandBus
 from control.telemetry_store import Telemetry
-from config.config import OPC_MODE, OPC_SERVER_URL, OPC_MOCK_SERVER_URL
+from config.config import OPC_MODE, OPC_SERVER_URL, OPC_MOCK_SERVER_URL, ROBOT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +17,18 @@ class OPCConfig:
     """Unified OPC UA configuration parameters."""
     url: str
     objects_name: str = "0:Objects"
-    robot_name: str = "22:robot1"
+    robot_id: int = ROBOT_ID
     poll_interval_ms: int = 50
     command_batch_size: int = 10
     skip_redundant_writes: bool = True
     connection_timeout: float = 5.0
     reconnect_delay: float = 2.0
     max_reconnect_attempts: int = 5
+
+    @property
+    def robot_name(self) -> str:
+        """Get the robot name based on robot ID."""
+        return f"{20 + self.robot_id}:robot{self.robot_id}"
 
 
 class OPCClientFactory:
@@ -84,7 +89,7 @@ class OPCClientFactory:
             real_config = RealOPCConfig(
                 url=config.url,
                 objects_name=config.objects_name,
-                robot_name=config.robot_name,
+                robot_id=config.robot_id,
                 poll_interval_ms=config.poll_interval_ms,
                 command_batch_size=config.command_batch_size,
                 skip_redundant_writes=config.skip_redundant_writes,
@@ -111,7 +116,7 @@ class OPCClientFactory:
             mock_config = MockOPCConfig(
                 url=config.url,
                 objects_name=config.objects_name,
-                robot_name=config.robot_name,
+                robot_id=config.robot_id,
                 poll_interval_ms=config.poll_interval_ms,
                 command_batch_size=config.command_batch_size,
                 skip_redundant_writes=config.skip_redundant_writes,

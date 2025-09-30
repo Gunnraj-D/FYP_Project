@@ -13,9 +13,10 @@ from dataclasses import dataclass
 from control.command_bus import CommandBus, Command, SetJoints, SetGripper, EmergencyStop
 from control.telemetry_store import Telemetry
 from config.config import (
-    OPC_SERVER_URL, OPC_OBJECTS_NAME, OPC_ROBOT_NAME, OPC_UPDATE_INTERVAL_SECONDS,
+    OPC_SERVER_URL, OPC_OBJECTS_NAME, OPC_UPDATE_INTERVAL_SECONDS,
     OPC_POLL_INTERVAL_MS, OPC_COMMAND_BATCH_SIZE, OPC_SKIP_REDUNDANT_WRITES,
-    OPC_CONNECTION_TIMEOUT_SECONDS, OPC_RECONNECT_DELAY_SECONDS, OPC_MAX_RECONNECT_ATTEMPTS
+    OPC_CONNECTION_TIMEOUT_SECONDS, OPC_RECONNECT_DELAY_SECONDS, OPC_MAX_RECONNECT_ATTEMPTS,
+    ROBOT_ID, get_robot_name, get_robot_namespace
 )
 
 logger = logging.getLogger(__name__)
@@ -26,13 +27,23 @@ class OPCConfig:
     """OPC UA configuration parameters."""
     url: str = OPC_SERVER_URL
     objects_name: str = OPC_OBJECTS_NAME
-    robot_name: str = OPC_ROBOT_NAME
+    robot_id: int = ROBOT_ID
     poll_interval_ms: int = OPC_POLL_INTERVAL_MS
     command_batch_size: int = OPC_COMMAND_BATCH_SIZE
     skip_redundant_writes: bool = OPC_SKIP_REDUNDANT_WRITES
     connection_timeout: float = OPC_CONNECTION_TIMEOUT_SECONDS
     reconnect_delay: float = OPC_RECONNECT_DELAY_SECONDS
     max_reconnect_attempts: int = OPC_MAX_RECONNECT_ATTEMPTS
+
+    @property
+    def robot_name(self) -> str:
+        """Get the robot name based on robot ID."""
+        return get_robot_name(self.robot_id)
+
+    @property
+    def robot_namespace(self) -> int:
+        """Get the robot namespace based on robot ID."""
+        return get_robot_namespace(self.robot_id)
 
 
 class OPCClient:
@@ -160,24 +171,25 @@ class OPCClient:
             objects = await root.get_child([self.config.objects_name])
             robot = await objects.get_child([self.config.robot_name])
 
-            # Initialize joint write nodes (R1c_Joi1 to R1c_Joi7)
+            # Initialize joint write nodes (R{robot_id}c_Joi1 to R{robot_id}c_Joi7)
             for i in range(1, 8):
-                node_name = f"R1c_Joi{i}"
+                node_name = f"R{self.config.robot_id}c_Joi{i}"
                 self.joint_write_nodes[i] = await robot.get_child([node_name])
 
-            # Initialize joint read nodes (R1d_Joi1 to R1d_Joi7)
+            # Initialize joint read nodes (R{robot_id}d_Joi1 to R{robot_id}d_Joi7)
             for i in range(1, 8):
-                node_name = f"R1d_Joi{i}"
+                node_name = f"R{self.config.robot_id}d_Joi{i}"
                 self.joint_read_nodes[i] = await robot.get_child([node_name])
 
             # Initialize control nodes
-            self.control_nodes['start'] = await robot.get_child(["R1c_Start"])
-            self.control_nodes['prog_id'] = await robot.get_child(["R1c_ProgID"])
-            self.control_nodes['status'] = await robot.get_child(["R1d_Status"])
-            self.control_nodes['gripper_control'] = await robot.get_child(["R1c_GripperAct"])
-            self.control_nodes['gripper_current'] = await robot.get_child(["R1d_GripperAct"])
+            self.control_nodes['start'] = await robot.get_child([f"R{self.config.robot_id}c_Start"])
+            self.control_nodes['prog_id'] = await robot.get_child([f"R{self.config.robot_id}c_ProgID"])
+            self.control_nodes['status'] = await robot.get_child([f"R{self.config.robot_id}d_Status"])
+            self.control_nodes['gripper_control'] = await robot.get_child([f"R{self.config.robot_id}c_GripperAct"])
+            self.control_nodes['gripper_current'] = await robot.get_child([f"R{self.config.robot_id}d_GripperAct"])
 
-            logger.info("OPC UA nodes initialized successfully")
+            logger.info(
+                f"OPC UA nodes initialized successfully for robot {self.config.robot_id}")
 
         except Exception as e:
             logger.error(f"Failed to initialize OPC UA nodes: {e}")

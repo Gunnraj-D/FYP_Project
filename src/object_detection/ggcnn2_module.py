@@ -13,7 +13,7 @@ from camera_management.camera_manager import CameraManager
 from camera_management.camera_transform_module import transform_camera_to_base
 from kinematics.kinematics_solver import InverseKinematicsSolver
 from object_detection.ggcnn2 import GGCNN2
-from config.config import GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, VISUAL_DEBUG_MODE
+from config.config import GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE, DEBUG_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -512,9 +512,10 @@ class GGcnn2Module:
                 logger.warning("Invalid current joint positions")
                 return None
 
-            # Convert pose from mm to meters for IK solver
-            pose_meters = [pose[0]/1000.0, pose[1]/1000.0,
-                           pose[2]/1000.0, pose[3], pose[4], pose[5]]
+            # Pose is already in meters from camera_manager.pixel_to_3d()
+            # No conversion needed - use pose directly
+            pose_meters = [pose[0], pose[1],
+                           pose[2], pose[3], pose[4], pose[5]]
 
             logger.debug(
                 f"Pose being passed to solve_pose: {pose_meters}, length: {len(pose_meters)}")
@@ -641,7 +642,7 @@ class GGcnn2Module:
             depth_image: Original depth image
             title: Window title for the display
         """
-        if not VISUAL_DEBUG_MODE:
+        if not DEBUG_MODE:
             return
 
         try:
@@ -686,7 +687,7 @@ class GGcnn2Module:
             grasp_2d: 2D grasp parameters (center, angle, width, quality)
             title: Window title for the display
         """
-        if not VISUAL_DEBUG_MODE:
+        if not DEBUG_MODE:
             return
 
         try:

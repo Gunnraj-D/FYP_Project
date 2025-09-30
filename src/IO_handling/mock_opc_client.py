@@ -14,9 +14,10 @@ from dataclasses import dataclass
 from control.command_bus import CommandBus, Command, SetJoints, SetGripper, EmergencyStop
 from control.telemetry_store import Telemetry
 from config.config import (
-    OPC_SERVER_URL, OPC_MOCK_SERVER_URL, OPC_OBJECTS_NAME, OPC_ROBOT_NAME, OPC_UPDATE_INTERVAL_SECONDS,
+    OPC_SERVER_URL, OPC_MOCK_SERVER_URL, OPC_OBJECTS_NAME, OPC_UPDATE_INTERVAL_SECONDS,
     OPC_POLL_INTERVAL_MS, OPC_COMMAND_BATCH_SIZE, OPC_SKIP_REDUNDANT_WRITES,
-    OPC_CONNECTION_TIMEOUT_SECONDS, OPC_RECONNECT_DELAY_SECONDS, OPC_MAX_RECONNECT_ATTEMPTS
+    OPC_CONNECTION_TIMEOUT_SECONDS, OPC_RECONNECT_DELAY_SECONDS, OPC_MAX_RECONNECT_ATTEMPTS,
+    ROBOT_ID, get_robot_name, get_robot_namespace
 )
 
 logger = logging.getLogger(__name__)
@@ -27,13 +28,23 @@ class MockOPCConfig:
     """Mock OPC UA configuration parameters."""
     url: str = OPC_MOCK_SERVER_URL
     objects_name: str = OPC_OBJECTS_NAME
-    robot_name: str = OPC_ROBOT_NAME
+    robot_id: int = ROBOT_ID
     poll_interval_ms: int = OPC_POLL_INTERVAL_MS
     command_batch_size: int = OPC_COMMAND_BATCH_SIZE
     skip_redundant_writes: bool = OPC_SKIP_REDUNDANT_WRITES
     connection_timeout: float = OPC_CONNECTION_TIMEOUT_SECONDS
     reconnect_delay: float = OPC_RECONNECT_DELAY_SECONDS
     max_reconnect_attempts: int = OPC_MAX_RECONNECT_ATTEMPTS
+
+    @property
+    def robot_name(self) -> str:
+        """Get the robot name based on robot ID."""
+        return get_robot_name(self.robot_id)
+
+    @property
+    def robot_namespace(self) -> int:
+        """Get the robot namespace based on robot ID."""
+        return get_robot_namespace(self.robot_id)
 
 
 class MockOPCClient:
@@ -173,32 +184,36 @@ class MockOPCClient:
             # Objects folder (ns=0;i=85)
             objects = self.client.get_node("ns=0;i=85")
 
-            # Robot object (ns=2;i=22)
-            robot = self.client.get_node("ns=2;i=22")
+            # Robot object with dynamic namespace and ID
+            robot = self.client.get_node(
+                f"ns={self.config.robot_namespace};i={self.config.robot_id}")
 
-            # Initialize joint write nodes (R1c_Joi1 to R1c_Joi7) - ns=2;i=1001-1007
+            # Initialize joint write nodes (R{robot_id}c_Joi1 to R{robot_id}c_Joi7) with string identifiers
             for i in range(1, 8):
-                node_id = f"ns=2;i={1000 + i}"
+                node_name = f"R{self.config.robot_id}c_Joi{i}"
+                node_id = f"ns={self.config.robot_namespace};s={node_name}"
                 self.joint_write_nodes[i] = self.client.get_node(node_id)
 
-            # Initialize joint read nodes (R1d_Joi1 to R1d_Joi7) - ns=2;i=2001-2007
+            # Initialize joint read nodes (R{robot_id}d_Joi1 to R{robot_id}d_Joi7) with string identifiers
             for i in range(1, 8):
-                node_id = f"ns=2;i={2000 + i}"
+                node_name = f"R{self.config.robot_id}d_Joi{i}"
+                node_id = f"ns={self.config.robot_namespace};s={node_name}"
                 self.joint_read_nodes[i] = self.client.get_node(node_id)
 
-            # Initialize control nodes
+            # Initialize control nodes with string identifiers
             self.control_nodes['start'] = self.client.get_node(
-                "ns=2;i=3001")  # R1c_Start
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}c_Start")
             self.control_nodes['prog_id'] = self.client.get_node(
-                "ns=2;i=3002")  # R1c_ProgID
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}c_ProgID")
             self.control_nodes['status'] = self.client.get_node(
-                "ns=2;i=3003")  # R1d_Status
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}d_Status")
             self.control_nodes['gripper_control'] = self.client.get_node(
-                "ns=2;i=3004")  # R1c_GripperAct
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}c_GripperAct")
             self.control_nodes['gripper_current'] = self.client.get_node(
-                "ns=2;i=3005")  # R1d_GripperAct
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}d_GripperAct")
 
-            logger.info("Mock OPC UA nodes initialized successfully")
+            logger.info(
+                f"Mock OPC UA nodes initialized successfully for robot {self.config.robot_id}")
 
         except Exception as e:
             logger.error(f"Failed to initialize Mock OPC UA nodes: {e}")
@@ -424,14 +439,14 @@ class MockOPCClient:
             nodes_to_write = []
             values_to_write = []
 
-            # Prepare write nodes (R1c_Joi1-7) - target positions
+            # Prepare write nodes (R{robot_id}c_Joi1-7) - target positions
             for i in range(1, 8):
                 if i <= len(joint_positions):
                     nodes_to_write.append(self.joint_write_nodes[i])
                     values_to_write.append(ua.Variant(
                         float(joint_positions[i-1]), ua.VariantType.Double))
 
-            # Prepare read nodes (R1d_Joi1-7) - current positions for instantaneous simulation
+            # Prepare read nodes (R{robot_id}d_Joi1-7) - current positions for instantaneous simulation
             for i in range(1, 8):
                 if i <= len(joint_positions):
                     nodes_to_write.append(self.joint_read_nodes[i])

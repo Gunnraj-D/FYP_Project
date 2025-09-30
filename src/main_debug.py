@@ -3,7 +3,7 @@ Debug version of the main integrated robot control system.
 Allows interactive selection and execution of individual states and task sequencers.
 """
 import warnings
-from config.config import PRE_PICKUP_POSE, HANDOFF_APPROACH_POSE
+from config.config import PRE_PICKUP_POSE, HANDOFF_APPROACH_POSE, ROBOT_ID
 from states.placement_task_sequencer import PlacementTaskSequencer, create_placement_sequencer
 from states.pickup_task_sequencer import PickupTaskSequencer, create_pickup_sequencer
 from states.grasping_state import GraspingState
@@ -95,7 +95,7 @@ class DebugSystemManager:
                     async def start_server():
                         from IO_handling.mock_opc_server import MockOPCServer
                         self.mock_server = MockOPCServer(
-                            url="opc.tcp://127.0.0.1:4841/")
+                            url="opc.tcp://127.0.0.1:4840/", robot_id=ROBOT_ID)
                         await self.mock_server.initialize()
                         await self.mock_server.start_server()
                         print("✅ Mock OPC UA server ready")
@@ -207,7 +207,7 @@ class DebugSystemManager:
                 try:
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sock.settimeout(5)
-                    result = sock.connect_ex(('127.0.0.1', 4841))
+                    result = sock.connect_ex(('127.0.0.1', 4840))
                     sock.close()
                     if result == 0:
                         print("✅ Mock server ready")
