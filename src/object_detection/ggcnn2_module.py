@@ -1,3 +1,5 @@
+import random
+import math
 import torch
 import torch.nn.functional as F
 import cv2
@@ -181,8 +183,10 @@ class GGcnn2Module:
                 target_orientation_matrix).as_euler('xyz').tolist()
             grasp_pose_base = target_position.tolist() + base_orientation_rpy
 
-            # Compute height above table for the grasp
-            grasp_height = self._compute_grasp_height(depth_image, grasp_2d)
+            # Compute height above table for the grasp using RANSAC
+            grasp_height = self._compute_grasp_height_ransac(
+                depth_image, grasp_2d, original_depth_frame)
+            logger.info(f"Grasp height above table: {grasp_height:.3f}m")
 
             # Create complete grasp result
             grasp_result = {
@@ -640,46 +644,413 @@ class GGcnn2Module:
             logger.error(f"Failed to convert pose to joint angles: {e}")
             return None
 
-    def _compute_grasp_height(self, depth_image: np.ndarray, grasp_2d: Dict) -> float:
+    def _compute_grasp_height_ransac(self, depth_image: np.ndarray, grasp_2d: Dict, original_depth_frame=None) -> float:
         """
-        Compute approximate grasp height directly from depth at the grasp center pixel.
-        This replaces table-reference logic with a simpler single-frame approach.
+        RANSAC-based table plane detection for grasp height estimation.
+
+        Args:
+            depth_image: Depth image array
+            grasp_2d: Grasp parameters with 'center' key
+            original_depth_frame: Optional RealSense depth frame
+
+        Returns:
+            Height above table in meters, or fallback height if plane not found
         """
         try:
+            # Get current TCP matrix for transformations
+            current_joints = self.telemetry.get_current_joints()
+            if current_joints is None or len(current_joints) != 7:
+                logger.warning("Cannot compute grasp height - invalid joints")
+                return 0.0
+            tcp_matrix, _ = self.kinematics_solver.tcp_from_joints(
+                current_joints.tolist())
+
+            # Get grasp center in camera frame
+            center_u, center_v = grasp_2d["center"]
             h_orig, w_orig = depth_image.shape
             scale_u = w_orig / 300.0
             scale_v = h_orig / 300.0
-
-            # Scale grasp center back to original depth resolution
-            center_u, center_v = grasp_2d["center"]
             center_u_scaled = int(center_u * scale_u)
             center_v_scaled = int(center_v * scale_v)
 
-            # Bounds check
-            if center_u_scaled < 0 or center_u_scaled >= w_orig \
-               or center_v_scaled < 0 or center_v_scaled >= h_orig:
-                logger.warning("Grasp center is outside depth frame bounds")
+            # Get depth at grasp center
+            depth_source = original_depth_frame if original_depth_frame is not None else depth_image
+            grasp_depth = self.camera_manager.get_average_depth(
+                depth_source, (center_u_scaled, center_v_scaled), 5
+            )
+            if grasp_depth <= 0:
+                logger.warning("Invalid grasp depth for height calculation")
                 return 0.0
 
-            # Extract raw depth at grasp center
-            depth_value = depth_image[center_v_scaled, center_u_scaled]
+            # Convert grasp pixel to 3D point in camera frame
+            grasp_point_cam = np.array(self.camera_manager.pixel_to_3d(
+                center_u_scaled, center_v_scaled, grasp_depth
+            ))
 
-            if depth_value <= 0:
-                logger.warning("Invalid depth at grasp center")
-                return 0.0
+            # Build point cloud from depth image (sample points for efficiency)
+            point_cloud_cam = []
+            sample_step = 10  # Sample every 10th pixel
+            for v in range(0, h_orig, sample_step):
+                for u in range(0, w_orig, sample_step):
+                    d = self.camera_manager.get_average_depth(
+                        depth_source, (u, v), 1)
+                    if d is not None and d > 0:
+                        pt = self.camera_manager.pixel_to_3d(u, v, d)
+                        point_cloud_cam.append(pt)
 
-            # Convert depth value to meters
-            if hasattr(depth_image, "get_units"):  # if it's a RealSense depth frame
-                depth_meters = depth_value * depth_image.get_units()
-            else:
-                # Assume depth image is in millimeters
-                depth_meters = depth_value / 1000.0
+            if len(point_cloud_cam) < 100:
+                logger.warning("Insufficient points for plane fitting")
+                return grasp_depth  # Fallback to grasp depth
 
-            return float(depth_meters)
+            point_cloud_cam = np.array(point_cloud_cam)
+
+            # RANSAC plane fitting
+            ransac_iters = 200
+            ransac_thresh = 0.01  # 1 cm tolerance
+            min_inliers = 100
+
+            best_plane = None
+            best_mean_depth = -np.inf
+
+            for _ in range(ransac_iters):
+                # Sample 3 random points
+                ids = np.random.choice(len(point_cloud_cam), 3, replace=False)
+                pts = point_cloud_cam[ids]
+
+                v1, v2 = pts[1] - pts[0], pts[2] - pts[0]
+                n = np.cross(v1, v2)
+                if np.linalg.norm(n) < 1e-6:
+                    continue
+                n = n / np.linalg.norm(n)
+
+                d = -np.dot(n, pts[0])
+                dists = np.abs(point_cloud_cam @ n + d)
+                inliers = point_cloud_cam[dists < ransac_thresh]
+
+                if len(inliers) < min_inliers:
+                    continue
+
+                # Transform plane normal to base frame to check if horizontal
+                origin_base = transform_camera_to_base([0, 0, 0], tcp_matrix)
+                tip_base = transform_camera_to_base(n.tolist(), tcp_matrix)
+                n_base = tip_base - origin_base
+                n_base = n_base / np.linalg.norm(n_base)
+
+                # Require plane to be close to horizontal (within 25° of Z-axis)
+                if abs(np.dot(n_base, [0, 0, 1])) < 0.9:
+                    continue
+
+                # Pick the deepest (largest z in camera coords) plane as the table
+                mean_z = np.mean(inliers[:, 2])
+                if mean_z > best_mean_depth:
+                    best_plane = (n, d)
+                    best_mean_depth = mean_z
+
+            if best_plane is None:
+                logger.warning(
+                    "No valid table plane found via RANSAC - using grasp depth as fallback")
+                return grasp_depth
+
+            # Compute signed distance from grasp point to plane
+            n, d = best_plane
+            dist = abs((np.dot(n, grasp_point_cam) + d) / np.linalg.norm(n))
+
+            logger.info(
+                f"Table plane found with {best_mean_depth:.3f}m mean depth, grasp height: {dist:.3f}m")
+            return dist
 
         except Exception as e:
-            logger.error(f"Failed to compute grasp height: {e}")
+            logger.error(f"Failed to compute grasp height with RANSAC: {e}")
             return 0.0
+
+    def _compute_grasp_height(self, depth_image: np.ndarray, grasp_2d: Dict, original_depth_frame=None) -> float:
+        """
+        Robust table-plane-based grasp height estimation.
+
+        Returns perpendicular distance (meters) from the grasp point to the estimated table plane.
+        Fallbacks to a local median-based depth estimate if plane fit fails.
+        """
+        try:
+            # Parameters (tune as needed)
+            # exclude inner disk (object footprint) in pixels (resized coords)
+            inner_radius_px = 12
+            # outer radius of sample annulus in pixels (resized coords)
+            outer_radius_px = 80
+            sample_count = 1200          # how many candidate pixels to sample in the annulus
+            ransac_iters = 250           # RANSAC iterations
+            # 1.5 cm threshold for inlier (meters)
+            ransac_inlier_thresh_m = 0.015
+            min_inliers_for_plane = 200  # need this many inliers to accept plane
+            fallback_median_window = 40  # if plane fails, take median depth in this px window
+
+            # get resized->orig scaling
+            # your pipeline resizes to 300x300 in preprocess, so mask/grasp coords are in that resized space
+            # but postprocess returns coords in resized (300x300). We'll map to original depth resolution.
+            if original_depth_frame is not None:
+                h_orig = original_depth_frame.get_height()
+                w_orig = original_depth_frame.get_width()
+            else:
+                h_orig, w_orig = depth_image.shape
+
+            # compute scale from resized (300) back to original
+            scale_u = w_orig / 300.0
+            scale_v = h_orig / 300.0
+
+            center_u_resized, center_v_resized = grasp_2d["center"]
+            center_u = int(center_u_resized * scale_u)
+            center_v = int(center_v_resized * scale_v)
+
+            # helper: read depth (meters) at integer pixel coords using either original_depth_frame or numpy
+            def read_depth_m(u_px, v_px):
+                # bounds
+                if u_px < 0 or u_px >= w_orig or v_px < 0 or v_px >= h_orig:
+                    return None
+                if original_depth_frame is not None:
+                    d = self.camera_manager.get_average_depth(
+                        original_depth_frame, (u_px, v_px), radius=1)
+                    if d is None or d <= 0:
+                        return None
+                    return float(d)
+                else:
+                    val = depth_image[v_px, u_px]
+                    if val <= 0:
+                        return None
+                    # decide units: if >10 assume mm
+                    if val > 10:
+                        return float(val) / 1000.0
+                    else:
+                        return float(val)
+
+            # Create a list of candidate pixels in annulus (in original pixel coords)
+            candidates = []
+            # sample uniformly in annulus in resized pixel space then map to orig coords
+            for _ in range(sample_count):
+                # sample radius between inner and outer
+                r = math.sqrt(random.uniform(
+                    inner_radius_px**2, outer_radius_px**2))
+                theta = random.uniform(0, 2 * math.pi)
+                u_r = int(center_u_resized + r * math.cos(theta))
+                v_r = int(center_v_resized + r * math.sin(theta))
+                # map to original
+                u_o = int(u_r * scale_u)
+                v_o = int(v_r * scale_v)
+                d_m = read_depth_m(u_o, v_o)
+                if d_m is not None:
+                    candidates.append((u_o, v_o, d_m))
+
+            # Need enough samples
+            if len(candidates) < 30:
+                # fallback: enlarge region and try median
+                pts = []
+                ws = fallback_median_window
+                for vv in range(center_v - ws, center_v + ws + 1):
+                    for uu in range(center_u - ws, center_u + ws + 1):
+                        d = read_depth_m(uu, vv)
+                        if d is not None:
+                            pts.append(d)
+                if len(pts) == 0:
+                    logging.warning(
+                        "No usable depth pixels for fallback median estimate")
+                    return 0.0
+                median_depth = float(np.median(pts))
+                # compute 3D grasp point
+                gx, gy, gz = self.camera_manager.pixel_to_3d(
+                    center_u, center_v, median_depth)
+                # fallback: report vertical distance along camera z (approx)
+                # but better to return gz (height above camera) — user seems to want height above table => approximate as gz - median_depth? ambiguous
+                # We'll return distance from grasp point to "table" approximated as median_depth along camera ray:
+                # return table Z in meters; but prefer returning grasp height so we'll compute below
+                return max(0.0, median_depth - (gz)) if False else median_depth
+
+            # Convert candidate pixels to 3D points (camera frame)
+            points = []
+            for (u_px, v_px, d_m) in candidates:
+                x, y, z = self.camera_manager.pixel_to_3d(u_px, v_px, d_m)
+                # ensure valid
+                if not (np.isfinite(x) and np.isfinite(y) and np.isfinite(z)):
+                    continue
+                points.append((x, y, z))
+            points = np.array(points)
+            if points.shape[0] < 30:
+                # fallback median as above
+                pts = []
+                ws = fallback_median_window
+                for vv in range(center_v - ws, center_v + ws + 1):
+                    for uu in range(center_u - ws, center_u + ws + 1):
+                        d = read_depth_m(uu, vv)
+                        if d is not None:
+                            pts.append(d)
+                if len(pts) == 0:
+                    logging.warning(
+                        "No usable depth pixels for fallback median estimate")
+                    return 0.0
+                median_depth = float(np.median(pts))
+                gx, gy, gz = self.camera_manager.pixel_to_3d(
+                    center_u, center_v, median_depth)
+                # here we estimate table plane as perpendicular to camera Z (simple fallback)
+                # height above table = gz - median_depth_in_camera_z? best approximate:
+                # but when camera_pixel_to_3d returns z as distance from camera along optical axis,
+                # the approximate perpendicular distance to a horizontal table is gz - median_depth (if gz and median_depth are same axis)
+                # safer: return gz - median_depth
+                return max(0.0, gz - median_depth)
+
+            # RANSAC plane fit to points
+            best_plane = None
+            best_inliers = 0
+            best_inlier_idxs = None
+
+            P = points  # Nx3 array
+
+            def fit_plane_from_three(p1, p2, p3):
+                # plane through p1, p2, p3 -> normal = (p2-p1) x (p3-p1)
+                v1 = p2 - p1
+                v2 = p3 - p1
+                n = np.cross(v1, v2)
+                norm = np.linalg.norm(n)
+                if norm < 1e-6:
+                    return None
+                n = n / norm
+                # plane equation: n . (X - p1) = 0 -> n.x * x + n.y * y + n.z * z + d = 0
+                d = -np.dot(n, p1)
+                return (n[0], n[1], n[2], d)
+
+            for _ in range(ransac_iters):
+                # pick 3 distinct random indices
+                idxs = np.random.choice(P.shape[0], 3, replace=False)
+                p1, p2, p3 = P[idxs[0]], P[idxs[1]], P[idxs[2]]
+                plane = fit_plane_from_three(p1, p2, p3)
+                if plane is None:
+                    continue
+                a, b, c, d = plane
+                # compute point-to-plane absolute distances
+                numer = np.abs(a * P[:, 0] + b * P[:, 1] + c * P[:, 2] + d)
+                denom = math.sqrt(a * a + b * b + c * c)
+                dists = numer / (denom + 1e-12)
+                inliers = np.sum(dists < ransac_inlier_thresh_m)
+                if inliers > best_inliers:
+                    best_inliers = int(inliers)
+                    best_plane = plane
+                    best_inlier_idxs = np.where(
+                        dists < ransac_inlier_thresh_m)[0]
+
+            if best_plane is None or best_inliers < min_inliers_for_plane:
+                # plane fit failed — fallback: median of lowest depths in larger patch
+                pts = []
+                ws = fallback_median_window
+                for vv in range(center_v - ws, center_v + ws + 1):
+                    for uu in range(center_u - ws, center_u + ws + 1):
+                        d = read_depth_m(uu, vv)
+                        if d is not None:
+                            pts.append(d)
+                if len(pts) == 0:
+                    logging.warning(
+                        "No usable depth pixels for fallback median estimate after RANSAC failure")
+                    return 0.0
+                # choose robust estimate of table depth: median of lower half of depths (to prefer table floor)
+                pts = np.array(pts)
+                pts_sorted = np.sort(pts)
+                take = max(1, int(len(pts_sorted) * 0.35))
+                table_depth_m = float(np.median(pts_sorted[:take]))
+                # convert center grasp pixel to 3D
+                grasp_depth = read_depth_m(center_u, center_v)
+                if grasp_depth is None:
+                    # if grasp depth missing, use table_depth (so height=0)
+                    return 0.0
+                gx, gy, gz = self.camera_manager.pixel_to_3d(
+                    center_u, center_v, grasp_depth)
+                # approximate perpendicular distance along camera z axis
+                # Use difference between grasp depth (distance along camera z) and table_depth as fallback
+                return max(0.0, grasp_depth - table_depth_m)
+
+            # Use best_plane to compute perpendicular distance from grasp 3D point to plane
+            a, b, c, d = best_plane
+
+            # get the grasp point depth value in meters (use average around center for stability)
+            # try to read average depth with camera_manager.get_average_depth if original_depth_frame present
+            if original_depth_frame is not None:
+                # ask camera manager for a small median depth around the center pixel
+                g_depth = self.camera_manager.get_average_depth(
+                    original_depth_frame, (center_u, center_v), radius=4)
+                grasp_depth_m = float(g_depth) if (
+                    g_depth is not None and g_depth > 0) else None
+            else:
+                raw_val = depth_image[center_v, center_u]
+                if raw_val <= 0:
+                    grasp_depth_m = None
+                elif raw_val > 10:
+                    grasp_depth_m = float(raw_val) / 1000.0
+                else:
+                    grasp_depth_m = float(raw_val)
+
+            if grasp_depth_m is None:
+                # if the grasp pixel has no depth, approximate grasp point by projecting camera ray with table plane intersection (skip)
+                # fallback to using the mean of inlier points for point location
+                if best_inlier_idxs is not None and len(best_inlier_idxs) > 0:
+                    inlier_pts = P[best_inlier_idxs]
+                    # approximate grasp xyz as mean inlier (not perfect but a fallback)
+                    gx, gy, gz = float(np.mean(inlier_pts[:, 0])), float(
+                        np.mean(inlier_pts[:, 1])), float(np.mean(inlier_pts[:, 2]))
+                else:
+                    return 0.0
+            else:
+                gx, gy, gz = self.camera_manager.pixel_to_3d(
+                    center_u, center_v, grasp_depth_m)
+
+            # compute perpendicular distance
+            numer = abs(a * gx + b * gy + c * gz + d)
+            denom = math.sqrt(a * a + b * b + c * c) + 1e-12
+            distance_m = numer / denom
+
+            # clamp non-negative
+            distance_m = max(0.0, float(distance_m))
+
+            return distance_m
+
+        except Exception as e:
+            logging.error(
+                f"Failed to compute grasp height (plane method): {e}")
+            return 0.0
+
+    # def _compute_grasp_height(self, depth_image: np.ndarray, grasp_2d: Dict) -> float:
+    #     """
+    #     Compute approximate grasp height directly from depth at the grasp center pixel.
+    #     This replaces table-reference logic with a simpler single-frame approach.
+    #     """
+    #     try:
+    #         h_orig, w_orig = depth_image.shape
+    #         scale_u = w_orig / 300.0
+    #         scale_v = h_orig / 300.0
+
+    #         # Scale grasp center back to original depth resolution
+    #         center_u, center_v = grasp_2d["center"]
+    #         center_u_scaled = int(center_u * scale_u)
+    #         center_v_scaled = int(center_v * scale_v)
+
+    #         # Bounds check
+    #         if center_u_scaled < 0 or center_u_scaled >= w_orig \
+    #            or center_v_scaled < 0 or center_v_scaled >= h_orig:
+    #             logger.warning("Grasp center is outside depth frame bounds")
+    #             return 0.0
+
+    #         # Extract raw depth at grasp center
+    #         depth_value = depth_image[center_v_scaled, center_u_scaled]
+
+    #         if depth_value <= 0:
+    #             logger.warning("Invalid depth at grasp center")
+    #             return 0.0
+
+    #         # Convert depth value to meters
+    #         if hasattr(depth_image, "get_units"):  # if it's a RealSense depth frame
+    #             depth_meters = depth_value * depth_image.get_units()
+    #         else:
+    #             # Assume depth image is in millimeters
+    #             depth_meters = depth_value / 1000.0
+
+    #         return float(depth_meters)
+
+    #     except Exception as e:
+    #         logger.error(f"Failed to compute grasp height: {e}")
+    #         return 0.0
 
     def _store_grasp_result(self, grasp_result: Dict):
         """
@@ -694,6 +1065,10 @@ class GGcnn2Module:
             # Store grasp height in telemetry
             self.telemetry.update_grasp_height(grasp_height)
 
+            # Store grasp height as pickup_height_offset for use in placement sequencer (seq 2)
+            # This ensures the object is placed at the same height it was picked up from
+            self.telemetry.set_pickup_height_offset(grasp_height)
+
             # Store the generated grasp pose and approach pose in telemetry
             # These will be used by MoveToState in the sequencer
             self.telemetry.set_generated_grasp_pose(grasp_pose_base)
@@ -707,6 +1082,8 @@ class GGcnn2Module:
 
             logger.info(
                 f"Grasp poses stored in telemetry - Grasp: {grasp_pose_base[:3]}, Approach: {approach_pose[:3]}, height: {grasp_height:.3f}m")
+            logger.info(
+                f"Pickup height offset set to {grasp_height:.3f}m for placement sequencer")
 
         except Exception as e:
             logger.error(f"Failed to store grasp result: {e}")

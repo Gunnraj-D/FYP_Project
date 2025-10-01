@@ -212,21 +212,37 @@ class UnifiedHandTrackingState(BaseState):
     def _calculate_placement_pose(self, hand_position):
         """Calculate final placement pose for object handoff."""
         try:
+            # Get current robot position for transformation
+            current_joints = self.context.telemetry.get_current_joints()
+            if current_joints is None or len(current_joints) != 7:
+                logger.warning(
+                    "Invalid current joints, cannot calculate placement pose")
+                return
+
+            # Calculate current TCP pose
+            current_tcp_matrix, current_tcp_pose = self.context.ik.tcp_from_joints(
+                current_joints)
+
+            # Transform hand position from camera frame to base frame
+            hand_position_base = transform_camera_to_base(
+                hand_position, current_tcp_matrix)
+
             # Get pickup height offset from telemetry
             pickup_height_offset = self.context.telemetry.get_pickup_height_offset()
 
-            # Convert hand position to meters (assuming input is already in meters)
-            hand_pos_meters = np.array(hand_position)
-
             # Calculate placement pose by offsetting hand position upward
             # This ensures the robot places the object at a safe height above the palm
-            placement_pose = hand_pos_meters.copy()
+            placement_pose = hand_position_base.copy()
             # pickup_height_offset is already in meters
             placement_pose[2] += pickup_height_offset
 
-            # Add rotation components (maintain same orientation as handoff approach)
-            full_placement_pose = list(
-                placement_pose) + [0.0, 0.0, -90.0]  # [x, y, z, rx, ry, rz]
+            # Add rotation components using the standard facing-down orientation
+            from scipy.spatial.transform import Rotation as R
+            facing_down_matrix = get_facing_down_orientation()
+            facing_down_rpy = R.from_matrix(facing_down_matrix).as_euler('xyz')
+
+            # [x, y, z, rx, ry, rz] in radians
+            full_placement_pose = list(placement_pose) + list(facing_down_rpy)
 
             # Store calculated handoff pose in telemetry
             self.context.telemetry.set_calculated_handoff_pose(
