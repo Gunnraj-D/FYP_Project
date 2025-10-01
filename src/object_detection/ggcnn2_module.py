@@ -123,15 +123,17 @@ class GGcnn2Module:
             if len(current_joints) != 7:
                 logger.error("Could not get current valid joint positions.")
                 return None
-            tcp_matrix, _ = self.kinematics_solver.tcp_from_joints(current_joints.tolist())
+            tcp_matrix, _ = self.kinematics_solver.tcp_from_joints(
+                current_joints.tolist())
 
             # 2. Transform ONLY the grasp POSITION to the base frame
             grasp_position_camera = grasp_pose_camera[:3]
-            target_position = transform_camera_to_base(grasp_position_camera, tcp_matrix)
+            target_position = transform_camera_to_base(
+                grasp_position_camera, tcp_matrix)
 
             # 3. Define the desired grasp ORIENTATION directly in the base frame
             # This ensures the gripper always tries to point downwards.
-            
+
             # Get the rotation angle from the 2D grasp detection
             grasp_angle_rad = grasp_2d["angle"]
 
@@ -147,13 +149,19 @@ class GGcnn2Module:
             # Combine them: First, point down, then rotate around Z-axis
             # The order of multiplication is important!
             target_orientation_matrix = R_z @ R_down
-            
+
+            # Log the resulting orientation for verification
+            result_rpy = R.from_matrix(
+                target_orientation_matrix).as_euler('xyz')
+            logger.info(
+                f"Grasp orientation - angle from GGCNN2: {np.degrees(grasp_angle_rad):.1f}°, "
+                f"resulting RPY: [{np.degrees(result_rpy[0]):.1f}°, {np.degrees(result_rpy[1]):.1f}°, {np.degrees(result_rpy[2]):.1f}°]")
+
             # 4. Solve IK with the decoupled position and orientation
             logger.info(
-                f"Attempting IK for position={target_position.tolist()}, "
-                f"with a downward orientation and yaw={np.degrees(grasp_angle_rad):.1f}°"
+                f"Attempting IK for position={target_position.tolist()}"
             )
-            
+
             # Use solve_XYZ which takes a position and an orientation matrix
             joint_angles = self.kinematics_solver.solve_XYZ(
                 target_position=target_position.tolist(),
@@ -162,13 +170,15 @@ class GGcnn2Module:
             )
 
             if joint_angles is None:
-                logger.warning("Failed to convert grasp pose to joint angles with new method.")
+                logger.warning(
+                    "Failed to convert grasp pose to joint angles with new method.")
                 return None
 
             # CODE HERE
 
             # Reconstruct the grasp_pose_base for logging/telemetry if needed
-            base_orientation_rpy = R.from_matrix(target_orientation_matrix).as_euler('xyz').tolist()
+            base_orientation_rpy = R.from_matrix(
+                target_orientation_matrix).as_euler('xyz').tolist()
             grasp_pose_base = target_position.tolist() + base_orientation_rpy
 
             # Compute height above table for the grasp
@@ -501,7 +511,15 @@ class GGcnn2Module:
             )
 
             if depth <= 0:
-                logger.warning("Invalid depth at grasp center")
+                logger.warning(
+                    f"Invalid depth at grasp center: depth={depth}, "
+                    f"center=({int(center_u_scaled)}, {int(center_v_scaled)}), "
+                    f"depth_frame_shape={depth_image.shape if hasattr(depth_image, 'shape') else 'unknown'}")
+                # Try to get depth statistics to understand the issue
+                if hasattr(depth_image, 'shape'):
+                    logger.warning(
+                        f"Depth stats: min={np.min(depth_image)}, max={np.max(depth_image)}, "
+                        f"mean={np.mean(depth_image)}, non-zero pixels={np.count_nonzero(depth_image)}")
                 return None
 
             # Convert pixel to 3D coordinates
@@ -665,23 +683,30 @@ class GGcnn2Module:
 
     def _store_grasp_result(self, grasp_result: Dict):
         """
-        Store grasp result in telemetry and command bus.
+        Store grasp result in telemetry.
+        Note: Does NOT send movement commands - that's handled by the sequencer states.
         """
         try:
-            # Store in telemetry (you may need to extend telemetry for grasp data)
-            # For now, we'll store the joint angles as target joints
-            joint_angles = grasp_result['joint_angles']
+            # Store grasp poses and height in telemetry for later use by sequencer
+            grasp_pose_base = grasp_result['grasp_pose_base']
             grasp_height = grasp_result.get('grasp_height', 0.0)
 
             # Store grasp height in telemetry
             self.telemetry.update_grasp_height(grasp_height)
 
-            # Send joint command to robot
-            from control.command_bus import SetJoints
-            self.command_bus.send(SetJoints(joints=joint_angles))
+            # Store the generated grasp pose and approach pose in telemetry
+            # These will be used by MoveToState in the sequencer
+            self.telemetry.set_generated_grasp_pose(grasp_pose_base)
+
+            # Calculate approach pose (offset above grasp)
+            approach_pose = grasp_pose_base.copy()
+            approach_offset = GRASP_DETECTION_CONFIG.get(
+                'approach_height_offset', 50.0) / 1000.0  # Convert mm to m
+            approach_pose[2] += approach_offset
+            self.telemetry.set_generated_approach_pose(approach_pose)
 
             logger.info(
-                f"Grasp command sent: {joint_angles}, height: {grasp_height:.3f}m")
+                f"Grasp poses stored in telemetry - Grasp: {grasp_pose_base[:3]}, Approach: {approach_pose[:3]}, height: {grasp_height:.3f}m")
 
         except Exception as e:
             logger.error(f"Failed to store grasp result: {e}")

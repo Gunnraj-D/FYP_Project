@@ -26,7 +26,7 @@ class GraspingState(BaseState):
     5. Monitors grasp success
     """
 
-    def __init__(self, context: StateContext):
+    def __init__(self, context: StateContext, auto_process: bool = False):
         super().__init__(context)
         self.ggcnn2_module: Optional[GGcnn2Module] = None
         self.grasp_attempts = 0
@@ -37,8 +37,9 @@ class GraspingState(BaseState):
 
         # Debug mode variables
         self.debug_mode = DEBUG_MODE
+        # Disable frame selection if auto_process is True (e.g., in sequencer mode)
         self.frame_selection_enabled = DEBUG_CONFIG.get(
-            'frame_selection_enabled', True)
+            'frame_selection_enabled', True) and not auto_process
         self.selected_frame = None
         self.frame_selected = False
 
@@ -95,21 +96,21 @@ class GraspingState(BaseState):
             logger.warning(f"Max grasp attempts ({self.max_attempts}) reached")
             return True
 
-        # Check if we have a valid grasp result
-        if self.current_grasp_result is None:
+        # When we have a valid grasp result, wait a bit to view the visualization
+        if self.current_grasp_result is not None:
+            if self.grasp_start_time == 0.0:
+                self.grasp_start_time = time.time()
+                logger.info(
+                    "Grasp pose generated successfully - displaying for 3 seconds")
+                return False
+
+            # Wait 3 seconds to view the grasp visualization
+            elapsed_time = time.time() - self.grasp_start_time
+            if elapsed_time >= 3.0:
+                logger.info("Grasp visualization complete - state complete")
+                return True
+
             return False
-
-        # Check if enough time has passed for grasp execution
-        if self.grasp_start_time == 0.0:
-            self.grasp_start_time = time.time()
-            return False
-
-        elapsed_time = time.time() - self.grasp_start_time
-        required_time = GRASP_EXECUTION_CONFIG['grasp_duration']
-
-        if elapsed_time >= required_time:
-            logger.info("Grasp execution completed")
-            return True
 
         return False
 

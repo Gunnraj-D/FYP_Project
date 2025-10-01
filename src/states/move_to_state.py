@@ -29,14 +29,23 @@ class MoveToState(BaseState):
             return
 
         # Get target location from telemetry or use provided location
+        target_orientation = None
         if self.pose_from_telemetry:
             target_pose = self._get_pose_from_telemetry()
             if target_pose is None:
                 logger.error(
                     f"Failed to retrieve pose from telemetry key: {self.pose_from_telemetry}")
                 return
-            # Extract XYZ coordinates from pose [x, y, z, rx, ry, rz]
+            # Extract XYZ coordinates and orientation from pose [x, y, z, rx, ry, rz]
             target_location = tuple(target_pose[:3])
+            # Extract orientation (rx, ry, rz) and convert to rotation matrix
+            if len(target_pose) >= 6:
+                from scipy.spatial.transform import Rotation as R
+                target_rpy = target_pose[3:6]
+                target_orientation = R.from_euler(
+                    'xyz', target_rpy).as_matrix()
+                logger.info(
+                    f"Using target orientation from telemetry: RPY=[{np.degrees(target_rpy[0]):.1f}°, {np.degrees(target_rpy[1]):.1f}°, {np.degrees(target_rpy[2]):.1f}°]")
         else:
             target_location = self.target_location
 
@@ -59,9 +68,14 @@ class MoveToState(BaseState):
         logger.info(
             f"Current joints shape: {current_joints.shape if hasattr(current_joints, 'shape') else 'No shape'}")
 
+        # Use target orientation from telemetry if available, otherwise default to facing down
+        if target_orientation is None:
+            target_orientation = get_facing_down_orientation()
+            logger.info("Using default facing-down orientation")
+
         logger.info(f"Target location: {target_location}")
         self.target_joint_angles = self.context.ik.solve_XYZ(
-            target_location, current_joints, get_facing_down_orientation())
+            target_location, current_joints, target_orientation)
         if self.target_joint_angles is None:
             logger.error(
                 f"IK solver failed for target location: {target_location}")

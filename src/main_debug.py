@@ -31,7 +31,8 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 # Configure logging with reduced verbosity for debug mode
 logging.basicConfig(
     level=logging.ERROR,  # Only show errors
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    force=True  # Force reconfiguration to ensure thread logs appear
 )
 
 # Set specific loggers to reduce noise
@@ -43,8 +44,9 @@ logging.getLogger('IO_handling.mock_opc_client').setLevel(logging.INFO)
 logging.getLogger('camera_management.camera_manager').setLevel(logging.ERROR)
 logging.getLogger(
     'hand_detection.hand_detection_module').setLevel(logging.ERROR)
-logging.getLogger('object_detection.ggcnn2_module').setLevel(logging.ERROR)
+logging.getLogger('object_detection.ggcnn2_module').setLevel(logging.INFO)
 logging.getLogger('kinematics.kinematics_solver').setLevel(logging.INFO)
+logging.getLogger('states.grasping_state').setLevel(logging.INFO)
 logging.getLogger('integrated_robot_control_system').setLevel(logging.ERROR)
 logging.getLogger('states.task_orchestrator').setLevel(logging.ERROR)
 # Allow MoveToState INFO logs like the IK solver
@@ -372,18 +374,28 @@ class DebugSystemManager:
             print(f"❌ Unknown sequencer type: {sequencer_type}")
             return
 
+        # Set the state machine's completion callback to queue the next task
+        self.state_machine.on_state_completion = sequencer.queue_next_task
+
+        # Queue the first task to start the sequence
+        sequencer.queue_next_task()
+
         self.execution_active = True
         self.force_complete = False
+        last_logged_step = -1
 
         try:
-            while not sequencer.task_queue and not self.force_complete:
+            while sequencer.task_queue and not self.force_complete:
                 sequencer.step()
                 time.sleep(0.1)  # 10Hz execution rate
 
-                # Show progress
+                # Show progress only when step changes
                 progress = sequencer.get_progress()
-                logger.info(f"Sequencer progress: {progress['current_step']}/{progress['total_steps']} "
-                            f"({progress['progress_percent']:.1f}%)")
+                current_step = progress['current_step']
+                if current_step > 0 and current_step != last_logged_step:
+                    logger.info(f"Sequencer progress: {current_step}/{progress['total_steps']} "
+                                f"({progress['progress_percent']:.1f}%)")
+                    last_logged_step = current_step
 
                 # Check for user input to force completion
                 if self._check_for_force_complete():
