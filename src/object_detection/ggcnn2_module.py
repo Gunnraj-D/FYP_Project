@@ -11,7 +11,7 @@ from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager
 from camera_management.camera_transform_module import transform_camera_to_base
-from kinematics.kinematics_solver import InverseKinematicsSolver
+from kinematics.kinematics_solver import InverseKinematicsSolver, get_facing_down_orientation
 from object_detection.ggcnn2 import GGCNN2
 from config.config import GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE, DEBUG_CONFIG
 
@@ -116,21 +116,60 @@ class GGcnn2Module:
 
             logger.info(f"Generated camera pose: {grasp_pose_camera}")
 
-            # Transform to robot base frame
-            grasp_pose_base = self._transform_to_base_frame(grasp_pose_camera)
+            # CODE HERE
 
-            if grasp_pose_base is None:
-                logger.warning("Failed to transform grasp pose to base frame")
+            # 1. Get current robot state for transformations
+            current_joints = self.telemetry.get_current_joints()
+            if len(current_joints) != 7:
+                logger.error("Could not get current valid joint positions.")
                 return None
+            tcp_matrix, _ = self.kinematics_solver.tcp_from_joints(current_joints.tolist())
 
-            logger.info(f"Transformed base pose: {grasp_pose_base}")
+            # 2. Transform ONLY the grasp POSITION to the base frame
+            grasp_position_camera = grasp_pose_camera[:3]
+            target_position = transform_camera_to_base(grasp_position_camera, tcp_matrix)
 
-            # Convert to joint angles
-            joint_angles = self._pose_to_joint_angles(grasp_pose_base)
+            # 3. Define the desired grasp ORIENTATION directly in the base frame
+            # This ensures the gripper always tries to point downwards.
+            
+            # Get the rotation angle from the 2D grasp detection
+            grasp_angle_rad = grasp_2d["angle"]
+
+            # Create a rotation matrix for this angle around the world Z-axis
+            # This aligns the gripper with the object on the table
+            from scipy.spatial.transform import Rotation as R
+            R_z = R.from_euler('z', grasp_angle_rad).as_matrix()
+
+            # Get the standard "facing down" rotation matrix from the kinematics solver
+            # This points the gripper towards the table
+            R_down = get_facing_down_orientation()
+
+            # Combine them: First, point down, then rotate around Z-axis
+            # The order of multiplication is important!
+            target_orientation_matrix = R_z @ R_down
+            
+            # 4. Solve IK with the decoupled position and orientation
+            logger.info(
+                f"Attempting IK for position={target_position.tolist()}, "
+                f"with a downward orientation and yaw={np.degrees(grasp_angle_rad):.1f}°"
+            )
+            
+            # Use solve_XYZ which takes a position and an orientation matrix
+            joint_angles = self.kinematics_solver.solve_XYZ(
+                target_position=target_position.tolist(),
+                current_joint_angles=current_joints.tolist(),
+                target_orientation=target_orientation_matrix
+            )
 
             if joint_angles is None:
-                logger.warning("Failed to convert grasp pose to joint angles")
+                logger.warning("Failed to convert grasp pose to joint angles with new method.")
                 return None
+
+            # CODE HERE
+
+            # Reconstruct the grasp_pose_base for logging/telemetry if needed
+            base_orientation_rpy = R.from_matrix(target_orientation_matrix).as_euler('xyz').tolist()
+            grasp_pose_base = target_position.tolist() + base_orientation_rpy
 
             # Compute height above table for the grasp
             grasp_height = self._compute_grasp_height(depth_image, grasp_2d)
@@ -144,6 +183,35 @@ class GGcnn2Module:
                 'quality': grasp_2d.get('quality', 0.0),
                 'grasp_height': grasp_height
             }
+
+            # # Transform to robot base frame
+            # grasp_pose_base = self._transform_to_base_frame(grasp_pose_camera)
+
+            # if grasp_pose_base is None:
+            #     logger.warning("Failed to transform grasp pose to base frame")
+            #     return None
+
+            # logger.info(f"Transformed base pose: {grasp_pose_base}")
+
+            # # Convert to joint angles
+            # joint_angles = self._pose_to_joint_angles(grasp_pose_base)
+
+            # if joint_angles is None:
+            #     logger.warning("Failed to convert grasp pose to joint angles")
+            #     return None
+
+            # # Compute height above table for the grasp
+            # grasp_height = self._compute_grasp_height(depth_image, grasp_2d)
+
+            # Create complete grasp result
+            # grasp_result = {
+            #     'grasp_2d': grasp_2d,
+            #     'grasp_pose_camera': grasp_pose_camera,
+            #     'grasp_pose_base': grasp_pose_base,
+            #     'joint_angles': joint_angles.tolist(),
+            #     'quality': grasp_2d.get('quality', 0.0),
+            #     'grasp_height': grasp_height
+            # }
 
             # Store in telemetry
             self._store_grasp_result(grasp_result)
@@ -484,15 +552,37 @@ class GGcnn2Module:
             base_position = transform_camera_to_base(
                 camera_position, tcp_matrix)
 
-            # Simplified orientation transformation
-            # For now, just use the camera orientation directly
-            # This avoids complex rotation composition that might be causing issues
-            grasp_rpy_camera = camera_pose[3:6]
+            # Proper orientation transformation accounting for camera mounting
+            # Camera orientation relative to TCP (from config)
+            from config.config import CAMERA_ROTATION_EULER
+            from scipy.spatial.transform import Rotation as R
 
-            # Use the camera orientation directly (simplified approach)
-            base_pose = base_position.tolist() + grasp_rpy_camera
+            # Get camera mounting rotation (TCP -> Camera)
+            camera_mount_euler = np.radians([
+                CAMERA_ROTATION_EULER['roll'],
+                CAMERA_ROTATION_EULER['pitch'],
+                CAMERA_ROTATION_EULER['yaw']
+            ])
+            tcp_to_camera_rot = R.from_euler('xyz', camera_mount_euler)
+
+            # Get grasp orientation in camera frame
+            grasp_rpy_camera = camera_pose[3:6]
+            grasp_in_camera_rot = R.from_euler('xyz', grasp_rpy_camera)
+
+            # Get TCP orientation in base frame
+            tcp_rot = R.from_matrix(tcp_matrix[:3, :3])
+
+            # Compose: Base -> TCP -> Camera -> Grasp
+            # grasp_in_base = tcp_in_base * tcp_to_camera * grasp_in_camera
+            grasp_in_base_rot = tcp_rot * tcp_to_camera_rot * grasp_in_camera_rot
+
+            # Convert back to euler angles
+            grasp_rpy_base = grasp_in_base_rot.as_euler('xyz')
+
+            # Compose final base pose
+            base_pose = base_position.tolist() + grasp_rpy_base.tolist()
             logger.debug(
-                f"Correctly transformed base frame grasp pose: {base_pose}")
+                f"Transformed base frame grasp pose: {base_pose}")
             return base_pose
 
         except Exception as e:
