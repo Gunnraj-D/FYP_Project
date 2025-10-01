@@ -9,6 +9,7 @@ import time
 import numpy as np
 from typing import Optional
 
+from kinematics.kinematics_solver import get_facing_down_orientation
 from states.base_state import BaseState
 from states.context import StateContext
 from control.command_bus import SetJoints
@@ -156,17 +157,31 @@ class UnifiedHandTrackingState(BaseState):
             current_tcp_matrix, current_tcp_pose = self.context.ik.tcp_from_joints(
                 current_joints)
 
-            # Transform hand position from camera to base frame
+            # Transform hand position from camera to base frame (diagnostics)
+            logger.info(f"Hand (camera): {hand_position}")
+            logger.info(f"TCP (base): pos={current_tcp_pose[:3]}")
             hand_position_base = transform_camera_to_base(
                 hand_position, current_tcp_matrix)
+            logger.info(f"Hand (base): {hand_position_base}")
 
             # Calculate target position with height offset
             target_position = hand_position_base.copy()
-            # Add height offset in meters
-            target_position[2] += DISTANCE_TO_REMAIN_M
+            # Desired Z = hand_z + offset (stay above hand)
+            hand_z = hand_position_base[2]
+            desired_z = hand_z + DISTANCE_TO_REMAIN_M
+            # Clamp to workspace floor at z >= 0 (meters)
+            workspace_floor_z = 0.0
+            if desired_z < workspace_floor_z:
+                logger.warning(
+                    f"Clamping target Z from {desired_z:.3f} to workspace floor {workspace_floor_z:.3f}")
+                desired_z = workspace_floor_z
+            target_position[2] = desired_z
+            current_z = current_tcp_pose[:3][2]
 
             # Calculate distance to target
             current_position = current_tcp_pose[:3]  # x, y, z
+            logger.info(
+                f"Target (base) with offset: {target_position}, Δz={target_position[2]-current_z:.3f}")
             distance_to_target = np.linalg.norm(
                 target_position - current_position)
 
@@ -178,7 +193,7 @@ class UnifiedHandTrackingState(BaseState):
 
             # Solve inverse kinematics for target position
             target_joints = self.context.ik.solve_XYZ(
-                target_position, current_joints)
+                target_position, current_joints, get_facing_down_orientation())
 
             if target_joints is not None:
                 # Send movement command via command bus

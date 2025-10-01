@@ -6,6 +6,7 @@ Provides instantaneous movement simulation by setting target = current.
 import asyncio
 from asyncua import Client, ua
 import logging
+import math
 import threading
 import time
 from typing import List, Optional, Dict, Any
@@ -21,6 +22,26 @@ from config.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def radians_to_degrees(radians: float) -> float:
+    """Convert radians to degrees."""
+    return radians * 180.0 / math.pi
+
+
+def degrees_to_radians(degrees: float) -> float:
+    """Convert degrees to radians."""
+    return degrees * math.pi / 180.0
+
+
+def convert_joints_rad_to_deg(joint_positions: List[float]) -> List[float]:
+    """Convert joint positions from radians to degrees."""
+    return [radians_to_degrees(angle) for angle in joint_positions]
+
+
+def convert_joints_deg_to_rad(joint_positions: List[float]) -> List[float]:
+    """Convert joint positions from degrees to radians."""
+    return [degrees_to_radians(angle) for angle in joint_positions]
 
 
 @dataclass
@@ -245,8 +266,11 @@ class MockOPCClient:
     async def _initialize_joint_values(self):
         """Initialize joint values to home position using batch operations."""
         try:
-            # Set initial joint values to home position
-            home_joints = [0.5, -1.0, 0.5, -2.0, 0.5, 1.5, 0.5]
+            # Set initial joint values to home position (in radians for application)
+            home_joints_rad = [0.5, -1.0, 0.5, -2.0, 0.5, 1.5, 0.5]
+
+            # Convert to degrees for OPC server
+            home_joints_deg = convert_joints_rad_to_deg(home_joints_rad)
 
             # Prepare nodes and values for batch write
             nodes_to_write = []
@@ -255,19 +279,19 @@ class MockOPCClient:
             # Add both write nodes and read nodes for proper initialization
             for i in range(1, 8):
                 joint_value = ua.Variant(
-                    home_joints[i-1], ua.VariantType.Double)
-                # Write nodes (target positions)
+                    home_joints_deg[i-1], ua.VariantType.Double)
+                # Write nodes (target positions in degrees)
                 nodes_to_write.append(self.joint_write_nodes[i])
                 values_to_write.append(joint_value)
-                # Read nodes (current positions for instantaneous simulation)
+                # Read nodes (current positions in degrees for instantaneous simulation)
                 nodes_to_write.append(self.joint_read_nodes[i])
                 values_to_write.append(joint_value)
 
             # Perform batch write for all joint nodes
             await self.client.write_values(nodes_to_write, values_to_write)
 
-            # Update telemetry with initial values
-            self.telemetry.update_current_joints(home_joints)
+            # Update telemetry with initial values in radians (for application)
+            self.telemetry.update_current_joints(home_joints_rad)
 
             logger.info("Initialized joint values to home position")
 
@@ -368,7 +392,9 @@ class MockOPCClient:
 
             # Update telemetry with batch results
             if joint_values:
-                self.telemetry.update_current_joints(joint_values)
+                # Convert joint values from degrees (server) to radians (application)
+                joint_values_rad = convert_joints_deg_to_rad(joint_values)
+                self.telemetry.update_current_joints(joint_values_rad)
 
             if status_value is not None:
                 self.telemetry.update_robot_status({
@@ -423,6 +449,9 @@ class MockOPCClient:
         Write joint positions with instantaneous movement simulation using batch operations.
         This is the key difference from the original client - we simulate
         instantaneous movement by setting current = target immediately.
+
+        Input: joint_positions in radians (from application)
+        Output: sends degrees to OPC server
         """
         if not self.connected or not self.client:
             return
@@ -435,31 +464,34 @@ class MockOPCClient:
                 self._last_joint_values = joint_positions.copy()
 
         try:
+            # Convert joint positions from radians to degrees for OPC server
+            joint_positions_deg = convert_joints_rad_to_deg(joint_positions)
+
             # Prepare nodes and values for batch write
             nodes_to_write = []
             values_to_write = []
 
-            # Prepare write nodes (R{robot_id}c_Joi1-7) - target positions
+            # Prepare write nodes (R{robot_id}c_Joi1-7) - target positions in degrees
             for i in range(1, 8):
-                if i <= len(joint_positions):
+                if i <= len(joint_positions_deg):
                     nodes_to_write.append(self.joint_write_nodes[i])
                     values_to_write.append(ua.Variant(
-                        float(joint_positions[i-1]), ua.VariantType.Double))
+                        float(joint_positions_deg[i-1]), ua.VariantType.Double))
 
-            # Prepare read nodes (R{robot_id}d_Joi1-7) - current positions for instantaneous simulation
+            # Prepare read nodes (R{robot_id}d_Joi1-7) - current positions in degrees for instantaneous simulation
             for i in range(1, 8):
-                if i <= len(joint_positions):
+                if i <= len(joint_positions_deg):
                     nodes_to_write.append(self.joint_read_nodes[i])
                     values_to_write.append(ua.Variant(
-                        float(joint_positions[i-1]), ua.VariantType.Double))
+                        float(joint_positions_deg[i-1]), ua.VariantType.Double))
 
             # Perform batch write for all joint nodes
             await self.client.write_values(nodes_to_write, values_to_write)
 
-            # Update telemetry with the new current joint positions for instantaneous movement
+            # Update telemetry with the new current joint positions in radians (for application)
             self.telemetry.update_current_joints(joint_positions)
             logger.debug(
-                f"Updated telemetry with joint positions: {joint_positions}")
+                f"Updated telemetry with joint positions (rad): {joint_positions}")
 
         except Exception as e:
             logger.error(f"Failed to write joint positions: {e}")
@@ -525,7 +557,12 @@ class MockOPCClient:
             logger.error(f"Failed to handle emergency stop: {e}")
 
     async def _read_joint_positions(self) -> Optional[List[float]]:
-        """Read current joint positions from robot using batch read."""
+        """
+        Read current joint positions from robot using batch read.
+
+        Input: reads degrees from OPC server
+        Output: returns radians to application
+        """
         try:
             # Prepare nodes for batch read
             nodes_to_read = [self.joint_read_nodes[i] for i in range(1, 8)]
@@ -533,9 +570,13 @@ class MockOPCClient:
             # Perform batch read
             values = await self.client.read_values(nodes_to_read)
 
-            # Convert to float list
-            current_joints = [float(value) for value in values]
-            return current_joints
+            # Convert to float list (values are in degrees from server)
+            current_joints_deg = [float(value) for value in values]
+
+            # Convert from degrees to radians for application
+            current_joints_rad = convert_joints_deg_to_rad(current_joints_deg)
+
+            return current_joints_rad
 
         except Exception as e:
             logger.error(f"Failed to read joint positions: {e}")

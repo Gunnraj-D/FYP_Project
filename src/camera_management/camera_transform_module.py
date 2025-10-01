@@ -42,6 +42,9 @@ def transform_camera_to_base(camera_position: List[float], tcp_matrix: np.ndarra
         from scipy.spatial.transform import Rotation as R
         camera_rotation_matrix = R.from_euler(
             'xyz', camera_rotation_rad).as_matrix()
+        # If camera is mounted facing downwards at TCP, ensure camera +Z (forward)
+        # maps toward -Z of TCP. Flip camera Z-axis to correct observed inversion.
+        camera_rotation_matrix[:, 2] *= -1.0
 
         # Create camera-to-TCP transformation matrix
         camera_to_tcp = np.eye(4)

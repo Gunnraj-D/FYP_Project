@@ -4,6 +4,7 @@ import numpy as np
 from states.context import StateContext
 from .base_state import BaseState
 from control.command_bus import SetJoints
+from kinematics.kinematics_solver import get_facing_down_orientation
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +61,24 @@ class MoveToState(BaseState):
 
         logger.info(f"Target location: {target_location}")
         self.target_joint_angles = self.context.ik.solve_XYZ(
-            target_location, current_joints)
+            target_location, current_joints, get_facing_down_orientation())
         if self.target_joint_angles is None:
             logger.error(
                 f"IK solver failed for target location: {target_location}")
             # Set to current to avoid infinite loop
             self.target_joint_angles = current_joints
             return
+
+        # # tcp_from_joints returns (tcp_matrix, tcp_pose). Unpack to get the matrix.
+        # final_pose_matrix, _ = self.context.ik.tcp_from_joints(
+        #     self.target_joint_angles)
+        # final_orientation = final_pose_matrix[:3, :3]
+
+        # logger.info("--- IK Result Verification ---")
+        # logger.info(
+        #     f"Final Orientation Matrix:\n{np.round(final_orientation, 2)}")
+        # logger.info("----------------------------")
+
         self.context.commands.send(
             SetJoints(list(self.target_joint_angles)))
         self.started_motion = True

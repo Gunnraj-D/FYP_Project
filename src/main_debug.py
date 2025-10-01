@@ -47,7 +47,8 @@ logging.getLogger('object_detection.ggcnn2_module').setLevel(logging.ERROR)
 logging.getLogger('kinematics.kinematics_solver').setLevel(logging.INFO)
 logging.getLogger('integrated_robot_control_system').setLevel(logging.ERROR)
 logging.getLogger('states.task_orchestrator').setLevel(logging.ERROR)
-logging.getLogger('states.move_to_state').setLevel(logging.ERROR)
+# Allow MoveToState INFO logs like the IK solver
+logging.getLogger('states.move_to_state').setLevel(logging.INFO)
 logging.getLogger('control.telemetry_store').setLevel(logging.ERROR)
 logging.getLogger('IO_handling.opc_client_factory').setLevel(logging.ERROR)
 
@@ -352,7 +353,7 @@ class DebugSystemManager:
         finally:
             # This block is GUARANTEED to run, ensuring cleanup.
             print(f"Exiting state: {state.name}")
-            state.exit() # This will call hand_tracker.stop()
+            state.exit()  # This will call hand_tracker.stop()
             self.execution_active = False
             print(f"✅ Completed: {state.name}")
 
