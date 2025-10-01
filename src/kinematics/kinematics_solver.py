@@ -1,29 +1,30 @@
 """
-Kinematics solver for KUKA iiwa robot.
-Provides forward and inverse kinematics using ikpy library.
+Kinematics solver for KUKA iiwa robot using PyBullet (drop-in replacement for ikpy-based solver).
+Provides forward and inverse kinematics and matching API:
+- InverseKinematicsSolver(urdf_filepath, base_elements, active_links_mask)
+- solve_XYZ(target_position, current_joint_angles, target_orientation=None, ...)
+- solve_pose(target_pose, current_joint_angles, ...)
+- tcp_from_joints(joint_angles_7)
+- solve_tcp(joint_angles_full)
+Note: Positions are expected in METERS for PyBullet.
 """
 import sys
-import os
 from pathlib import Path
-
-# Add the project root to Python path for imports
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-from ikpy.chain import Chain
-import numpy as np
 from typing import List, Optional
+
+import numpy as np
 import logging
+import pybullet as p
+import pybullet_data
 from scipy.spatial.transform import Rotation as R
-from src.config.config import BASE_ELEMENT, ACTIVE_LINKS, URDF_FILEPATH
 
-
+# preserve same imports names as original file for ease of swapping
 logger = logging.getLogger(__name__)
 
 
 def homogeneous_to_pose(T: np.ndarray) -> List[float]:
     """
-    Convert homogeneous transform to [x,y,z,roll,pitch,yaw] (mm, rad)
+    Convert homogeneous transform to [x,y,z,roll,pitch,yaw] (meters, rad)
     """
     if T.shape != (4, 4):
         raise ValueError(f"Expected 4x4 matrix, got {T.shape}")
@@ -32,67 +33,167 @@ def homogeneous_to_pose(T: np.ndarray) -> List[float]:
     return [x, y, z, roll, pitch, yaw]
 
 
+def get_facing_down_orientation() -> np.ndarray:
+    """
+    Returns the 3x3 rotation matrix for a tool facing straight down.
+    This corresponds to a 180-degree rotation around the world's X-axis.
+    """
+    return np.array([
+        [1,  0,  0],
+        [0, -1,  0],
+        [0,  0, -1]
+    ])
+
+
 class InverseKinematicsSolver:
     """
-    Kinematics solver for robot arm using ikpy.
-    Joint limits are integrated directly into the ikpy Chain object for robust solving.
+    Kinematics solver wrapper using PyBullet.
+    Keeps a pybullet client open for fast FK/IK queries.
     """
 
-    def __init__(self, urdf_filepath: str, base_elements: List[str], active_links_mask: List[bool]):
+    def __init__(self, urdf_filepath: str, base_elements: List[str], active_links_mask: List[bool], use_gui: bool = False):
+        """
+        urdf_filepath: path to URDF (string)
+        base_elements, active_links_mask: accepted for compatibility (not used by pybullet heavily)
+        use_gui: start a GUI physics client when True (useful for debugging)
+        """
         try:
-            self.chain = Chain.from_urdf_file(
-                urdf_filepath,
-                base_elements=base_elements,
-                active_links_mask=active_links_mask
+            # Start PyBullet
+            self.client = p.connect(p.GUI if use_gui else p.DIRECT)
+            p.setAdditionalSearchPath(
+                pybullet_data.getDataPath(), physicsClientId=self.client)
+            p.setPhysicsEngineParameter(
+                enableFileCaching=0, physicsClientId=self.client)
+
+            # Load URDF (accept Path or str)
+            flags = p.URDF_USE_INERTIA_FROM_FILE
+            urdf_path_str = str(urdf_filepath)
+            self.robot_id = p.loadURDF(
+                urdf_path_str,
+                useFixedBase=True,
+                flags=flags,
+                physicsClientId=self.client
             )
+
+            # Cache joint & link info
+            self.num_joints = p.getNumJoints(
+                self.robot_id, physicsClientId=self.client)
+            # Revolute/prismatic joints: jointType 0 = revolute, 1 = prismatic, etc.
+            revolute_indices = []
+            revolute_names = []
+            for j in range(self.num_joints):
+                info = p.getJointInfo(
+                    self.robot_id, j, physicsClientId=self.client)
+                joint_type = info[2]
+                joint_name = info[1].decode('utf-8')
+                # JOINT_REVOLUTE constant is 0
+                if joint_type == p.JOINT_REVOLUTE or joint_type == p.JOINT_PRISMATIC:
+                    revolute_indices.append(j)
+                    revolute_names.append(joint_name)
+
+            self.revolute_joint_indices = revolute_indices
+            self.revolute_joint_names = revolute_names
+
             logger.info(
-                f"Kinematics chain initialized with {len(self.chain.links)} links")
-            # Store masks/indices
+                f"Loaded URDF: {urdf_path_str} with {len(self.revolute_joint_indices)} active revolute/prismatic joints")
+
+            # Attempt to find end effector link index: assume last link by default
+            # You can override this by setting self.end_effector_link_index externally if needed
+            self.end_effector_link_index = self.num_joints - 1
+
+            # Compatibility fields
             self.active_links_mask = active_links_mask
-            # Indices of the 7 actuated robot joints (exclude base and tool fixed joints)
-            self.movable_joint_indices = [
-                i for i, active in enumerate(self.active_links_mask)
-                if active and i > 0
-            ]
-            if len(self.movable_joint_indices) != 7:
+            # Build a best-effort movable_joint_indices mapping (indices into a "full chain" style array).
+            # If active_links_mask length matches number of revolute joints, map 1-to-1; otherwise create a trivial mapping.
+            try:
+                if active_links_mask and len(active_links_mask) == len(self.revolute_joint_indices):
+                    self.movable_joint_indices = [
+                        i for i, v in enumerate(active_links_mask) if v]
+                else:
+                    # fallback: first N revolute joints
+                    self.movable_joint_indices = list(
+                        range(len(self.revolute_joint_indices)))
+            except Exception:
+                self.movable_joint_indices = list(
+                    range(len(self.revolute_joint_indices)))
+
+            # Ensure we can handle typical 7-DOF iiwa
+            if len(self.revolute_joint_indices) < 7:
                 logger.warning(
-                    f"Expected 7 movable joints, found {len(self.movable_joint_indices)} from mask."
-                )
+                    "Less than 7 revolute joints detected in URDF - verify URDF and joints mapping")
+
         except Exception as e:
-            logger.error(f"Failed to initialize kinematics solver: {e}")
+            logger.error(f"Failed to initialize PyBullet IK solver: {e}")
             raise
+
+    def disconnect(self):
+        try:
+            p.disconnect(physicsClientId=self.client)
+        except Exception:
+            pass
+
+    def _set_joint_states_from_list(self, joint_values: List[float]):
+        """
+        Set revolute joints to the provided values. joint_values length must match number of revolute joints used.
+        This uses resetJointState (instant, no physics) for quick FK checks.
+        """
+        if len(joint_values) != len(self.revolute_joint_indices):
+            raise ValueError(
+                f"Expected {len(self.revolute_joint_indices)} joint values, got {len(joint_values)}")
+        for idx, j in enumerate(self.revolute_joint_indices):
+            p.resetJointState(self.robot_id, j,
+                              joint_values[idx], physicsClientId=self.client)
 
     def solve_tcp(self, joint_angles: List[float]) -> np.ndarray:
         """
-        Forward kinematics for a full joint vector matching the chain length.
-        Use tcp_from_joints if you have only 7 robot joints.
+        Forward kinematics for a full joint vector matching the revolute_joint_indices length.
+        Returns 4x4 homogeneous transform matrix (world -> end effector).
         """
-        if len(joint_angles) != len(self.active_links_mask):
+        # Expect joint_angles to match revolute joints count
+        if len(joint_angles) != len(self.revolute_joint_indices):
             raise ValueError(
-                f"Expected {len(self.active_links_mask)} joint angles, got {len(joint_angles)}")
-        try:
-            return self.chain.forward_kinematics(joint_angles)
-        except Exception as e:
-            logger.error(f"Forward kinematics failed: {e}")
-            raise
+                f"Expected {len(self.revolute_joint_indices)} joint angles, got {len(joint_angles)}")
+
+        # Apply joints and query link state
+        self._set_joint_states_from_list(list(joint_angles))
+        link_state = p.getLinkState(self.robot_id, self.end_effector_link_index,
+                                    computeForwardKinematics=True, physicsClientId=self.client)
+        pos = np.array(link_state[4])  # worldLinkFramePosition
+        # worldLinkFrameOrientation quaternion (x,y,z,w)
+        orn = np.array(link_state[5])
+        rot = R.from_quat(orn).as_matrix()
+        T = np.eye(4)
+        T[:3, :3] = rot
+        T[:3, 3] = pos
+        return T
 
     def tcp_from_joints(self, joint_angles_7: List[float]):
         """
         Helper to compute TCP 4x4 matrix and pose from 7 joint angles (rad).
-        Adds dummy base/tool joints as required by the chain.
+        This method maps the 7 provided joint values to the first 7 revolute joints found in the URDF.
+        Returns (tcp_matrix, tcp_pose) where tcp_pose is [x,y,z,roll,pitch,yaw]
         """
         if len(joint_angles_7) != 7:
             raise ValueError(
                 f"Expected 7 joint values, got {len(joint_angles_7)}")
-        joints_full = np.insert(np.asarray(
-            joint_angles_7, dtype=float), 0, 0.0)
-        # Add 3 dummy joints for the 3 fixed links at the end
-        joints_full = np.append(joints_full, [0.0, 0.0, 0.0])
-        logger.debug(
-            f"Full joint array length: {len(joints_full)}, expected: {len(self.active_links_mask)}")
-        tcp_matrix = self.solve_tcp(joints_full)
+        if len(self.revolute_joint_indices) < 7:
+            raise RuntimeError(
+                "URDF does not expose at least 7 revolute joints. Unable to map 7-joint vector.")
+
+        # Build full revolute joint vector: use provided 7 values for first 7 revolute joints and zeros for the rest
+        full_joint_vector = np.zeros(
+            len(self.revolute_joint_indices), dtype=float)
+        full_joint_vector[:7] = np.asarray(joint_angles_7, dtype=float)
+
+        tcp_matrix = self.solve_tcp(full_joint_vector.tolist())
         tcp_pose = homogeneous_to_pose(tcp_matrix)
         return tcp_matrix, tcp_pose
+
+    def _rotation_matrix_to_quat(self, R_mat: np.ndarray) -> List[float]:
+        """
+        Convert 3x3 rotation matrix to quaternion in (x, y, z, w) for PyBullet (same order SciPy uses).
+        """
+        return R.from_matrix(R_mat).as_quat().tolist()  # SciPy returns [x, y, z, w]
 
     def solve_XYZ(
         self,
@@ -102,90 +203,101 @@ class InverseKinematicsSolver:
         max_iterations: int = 100,
         tolerance: float = 1e-4
     ) -> np.ndarray:
-        # Accept either 7-joint vector (robot joints) or full-length vector (chain)
+        """
+        Compute IK for target position and optional orientation using PyBullet.
+        - target_position: [x,y,z] in meters
+        - current_joint_angles: either 7-length list or full-length matching revolute joints count
+        - target_orientation: optional 3x3 rotation matrix (world->tcp)
+        Returns numpy array of 7 joint targets (rad) for the robot's first 7 revolute joints.
+        """
+        # Normalize inputs
+        if target_position is None or any(x is None for x in target_position):
+            raise ValueError("Target position contains None values")
+
+        # Convert current joints into length matching revolute joints for pybullet initial guess
         if len(current_joint_angles) == 7:
-            initial_full = np.insert(np.asarray(
-                current_joint_angles, dtype=float), 0, 0.0)
-            # Add 3 dummy joints for the 3 fixed links at the end
-            initial_full = np.append(initial_full, [0.0, 0.0, 0.0])
-        elif len(current_joint_angles) == len(self.active_links_mask):
+            initial_full = np.zeros(
+                len(self.revolute_joint_indices), dtype=float)
+            initial_full[:7] = np.asarray(current_joint_angles, dtype=float)
+        elif len(current_joint_angles) == len(self.revolute_joint_indices):
             initial_full = np.asarray(current_joint_angles, dtype=float)
         else:
-            raise ValueError(
-                f"Expected 7 or {len(self.active_links_mask)} joint angles, got {len(current_joint_angles)}")
+            # try to fallback if they provided a longer mask-like vector
+            try:
+                initial_full = np.asarray(current_joint_angles, dtype=float)[
+                    :len(self.revolute_joint_indices)]
+            except Exception:
+                raise ValueError(
+                    f"Expected 7 or {len(self.revolute_joint_indices)} joint angles, got {len(current_joint_angles)}")
+
+        # Ensure constraints on iterations
+        max_iterations = min(max_iterations, 200)
+
+        # Convert orientation (3x3) to quaternion if provided
+        quat = None
+        if target_orientation is not None:
+            if target_orientation.shape != (3, 3):
+                raise ValueError(
+                    "target_orientation must be 3x3 rotation matrix")
+            quat = self._rotation_matrix_to_quat(target_orientation)
+
+        # Call PyBullet IK
         try:
-            # Check for None values in inputs
-            logger.info(f"IK Solver - Target position: {target_position}")
-            logger.info(f"IK Solver - Initial full: {initial_full}")
-
-            if target_position is None or any(x is None for x in target_position):
-                logger.error(
-                    f"Target position contains None values: {target_position}")
-                raise ValueError("Target position contains None values")
-            if initial_full is None or any(x is None for x in initial_full):
-                logger.error(
-                    f"Initial position contains None values: {initial_full}")
-                raise ValueError("Initial position contains None values")
-
-            target_matrix = np.eye(4)
-            target_matrix[:3, 3] = target_position
-            orientation_mode = None
-            if target_orientation is not None:
-                target_matrix[:3, :3] = target_orientation
-                orientation_mode = "all"
-            # Debug logging for ikpy call
-            logger.debug(f"Target matrix shape: {target_matrix.shape}")
-            logger.debug(f"Initial position shape: {initial_full.shape}")
-            logger.debug(f"Orientation mode: {orientation_mode}")
-
-            # Use ikpy 3.4.2 API format with reduced iterations for faster solving
-            # Limit iterations to prevent hanging
-            max_iterations = min(max_iterations, 50)
-
-            if target_orientation is not None:
-                # Extract Z-axis direction from rotation matrix for ikpy
-                # Third column is Z-axis
-                z_axis_direction = target_orientation[:, 2]
-                solution_angles_full = self.chain.inverse_kinematics(
-                    target_position=target_position,
-                    target_orientation=z_axis_direction,
-                    orientation_mode="Z",  # Target Z-axis orientation
-                    initial_position=initial_full,
-                    max_iter=max_iterations
-                )
-            else:
-                # Position-only IK
-                solution_angles_full = self.chain.inverse_kinematics(
-                    target_position=target_position,
-                    initial_position=initial_full,
-                    max_iter=max_iterations
-                )
-            # Compute final pose for error checking
-            final_pose_matrix = self.solve_tcp(solution_angles_full)
-            final_position = final_pose_matrix[:3, 3]
-            positional_error = np.linalg.norm(
-                final_position - np.array(target_position))
-            if positional_error > tolerance:
-                logger.warning(
-                    f"IK solver failed to converge. error: {positional_error:.4f} > tol: {tolerance}"
-                )
-                # For debug mode, return a solution even if not perfect
-                if positional_error < 0.1:  # Accept solutions within 10cm # MARK
-                    logger.warning(
-                        "Accepting suboptimal solution for debug mode")
-                else:
-                    raise RuntimeError(
-                        "Inverse kinematics failed to find a valid solution within tolerance.")
-
-            logger.debug(
-                f"IK solution positional error: {positional_error:.4f}")
-            # Return only the 7 actuated joints, in order
-            solution_7 = np.asarray(solution_angles_full, dtype=float)[
-                self.movable_joint_indices]
-            return solution_7
+            sol = p.calculateInverseKinematics(
+                bodyUniqueId=self.robot_id,
+                endEffectorLinkIndex=self.end_effector_link_index,
+                targetPosition=target_position,
+                targetOrientation=quat,
+                maxNumIterations=max_iterations,
+                residualThreshold=tolerance,
+                physicsClientId=self.client
+            )
         except Exception as e:
-            logger.error(f"Inverse kinematics failed: {e}")
+            logger.error(f"PyBullet calculateInverseKinematics failed: {e}")
             raise
+
+        # `sol` contains a solution for all joints (length == num_joints).
+        # We extract revolute joints in the order we discovered them.
+        solution_revolute = []
+        for rev_idx in self.revolute_joint_indices:
+            # When pybullet returns a full-length vector, selecting by joint index is safe
+            try:
+                solution_revolute.append(sol[rev_idx])
+            except Exception:
+                # If calculateInverseKinematics returned only revolute joint solutions in order,
+                # fallback to using sequential extraction.
+                logger.debug(
+                    "Falling back to sequential extraction from IK solution.")
+                # convert sol to array and take first N revolute
+                arr = np.asarray(sol, dtype=float)
+                solution_revolute = arr[:len(
+                    self.revolute_joint_indices)].tolist()
+                break
+
+        solution_revolute = np.asarray(solution_revolute, dtype=float)
+
+        # Return only the first 7 actuated joints (matching your robot)
+        if len(solution_revolute) < 7:
+            raise RuntimeError(
+                "IK returned fewer than 7 revolute joint values.")
+        solution_7 = solution_revolute[:7]
+
+        # Optional: verify positional error
+        # Apply solution to robot and compute actual TCP
+        try:
+            self._set_joint_states_from_list(solution_revolute.tolist())
+            link_state = p.getLinkState(self.robot_id, self.end_effector_link_index,
+                                        computeForwardKinematics=True, physicsClientId=self.client)
+            achieved_pos = np.array(link_state[4])
+            pos_err = np.linalg.norm(
+                achieved_pos - np.asarray(target_position))
+            if pos_err > tolerance:
+                logger.warning(
+                    f"IK residual position error: {pos_err:.4f} (tolerance {tolerance})")
+        except Exception as ex:
+            logger.debug(f"FK verification failed: {ex}")
+
+        return solution_7
 
     def solve_pose(
         self,
@@ -194,10 +306,11 @@ class InverseKinematicsSolver:
         max_iterations: int = 100,
         tolerance: float = 1e-4
     ) -> np.ndarray:
+        """
+        target_pose expected as [x,y,z, rx, ry, rz] where rx,ry,rz are Euler 'xyz' angles (radians).
+        """
         position = target_pose[:3]
         euler_angles = target_pose[3:6]
-        logger.debug(f"Position: {position}, type: {type(position)}")
-        logger.debug(f"Euler angles: {euler_angles}")
         rotation_matrix = R.from_euler('xyz', euler_angles).as_matrix()
         return self.solve_XYZ(
             position,
@@ -207,33 +320,23 @@ class InverseKinematicsSolver:
             tolerance=tolerance
         )
 
-
-# Planning/motion utilities colocated with kinematics for now
-def validate_workspace_limits(position: np.ndarray, workspace_limits: dict = None) -> bool:
-    if workspace_limits is None:
-        # Updated workspace limits to accommodate KUKA iiwa's actual reach
-        # Z-axis extended to 1600mm to allow for current TCP position at 1444mm
-        workspace_limits = {'min': np.array(
-            [-800, -800, 0]), 'max': np.array([800, 800, 1600])}
-    position = np.array(position)
-    return np.all(position >= workspace_limits['min']) and np.all(position <= workspace_limits['max'])
+    # (optional) destructor fallback
+    def __del__(self):
+        try:
+            self.disconnect()
+        except Exception:
+            pass
 
 
-def calculate_approach_position(target_position: np.ndarray, approach_distance: float = 100.0, approach_direction: np.ndarray = None) -> np.ndarray:
-    if approach_direction is None:
-        approach_direction = np.array([0, 0, -1])
-    approach_direction = approach_direction / \
-        np.linalg.norm(approach_direction)
-    return target_position - approach_distance * approach_direction
-
-
+# Example usage when run as script (quick smoke test)
 if __name__ == "__main__":
+    import os
+    logging.basicConfig(level=logging.INFO)
+    # Replace with your URDF path
+    urdf = os.environ.get("URDF_FILEPATH", "src/resources/models/iiwa14.urdf")
     solver = InverseKinematicsSolver(
-        urdf_filepath=URDF_FILEPATH,
-        base_elements=BASE_ELEMENT,
-        active_links_mask=ACTIVE_LINKS
-    )
-    print(solver.solve_XYZ(
-        target_position=[0.5, 0.0, 0.6],
-        current_joint_angles=[0.5, -1.0, 0.5, -2.0, 0.5, 1.5, 0.5]
-    ))
+        urdf_filepath=urdf, base_elements=None, active_links_mask=None, use_gui=False)
+    sol7 = solver.solve_XYZ([0.5, 0.0, 0.6], [0.0]*7,
+                            get_facing_down_orientation())
+    print("Solution (7):", sol7)
+    solver.disconnect()
