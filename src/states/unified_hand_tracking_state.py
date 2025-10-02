@@ -108,32 +108,39 @@ class UnifiedHandTrackingState(BaseState):
             logger.error(f"Error in UnifiedHandTrackingState execution: {e}")
 
     def _update_hand_tracking(self, hand_position):
-        """Update hand tracking state and check stability."""
+        """Update hand tracking state and check stability based on dead zone."""
         try:
             # Store live hand pose in telemetry
             # Convert from camera vector format to pose format [x, y, z, rx, ry, rz]
             live_hand_pose = hand_position + [0.0, 0.0, 0.0]
             self.context.telemetry.set_live_hand_pose(live_hand_pose)
 
-            # Check hand stability
-            if self.last_hand_position is not None:
-                # Calculate distance moved
-                distance = np.linalg.norm(
-                    np.array(hand_position) - np.array(self.last_hand_position)
-                )
+            # Check if hand is within the 3D dead zone
+            # Dead zone is centered on camera optical axis (0, 0) at desired distance
+            hand_pos = np.array(hand_position)
+            target_pos = np.array([0.0, 0.0, DISTANCE_TO_REMAIN_M])
 
-                # Check if hand is stable (within threshold)
-                if distance < HAND_STABILITY_THRESHOLD:
-                    if not self.is_hand_stable:
-                        self.is_hand_stable = True
-                        self.hand_stable_start_time = time.time()
-                        logger.info("Hand detected as stable")
-                else:
-                    # Reset stability if hand moved too much
-                    self.is_hand_stable = False
-                    self.hand_stable_start_time = 0.0
-                    logger.debug(
-                        f"Hand moved {distance:.3f}m, resetting stability")
+            # Calculate 3D distance from hand to target position
+            distance_from_target = np.linalg.norm(hand_pos - target_pos)
+
+            # Use 2cm threshold for dead zone (can be adjusted)
+            dead_zone_threshold = 0.02  # 2cm
+
+            # Check if hand is within dead zone
+            if distance_from_target < dead_zone_threshold:
+                if not self.is_hand_stable:
+                    self.is_hand_stable = True
+                    self.hand_stable_start_time = time.time()
+                    logger.info(
+                        f"Hand entered dead zone (distance: {distance_from_target*1000:.1f}mm from target)")
+                # Hand remains stable - timer continues
+            else:
+                # Reset stability if hand exits dead zone
+                if self.is_hand_stable:
+                    logger.info(
+                        f"Hand exited dead zone (distance: {distance_from_target*1000:.1f}mm from target)")
+                self.is_hand_stable = False
+                self.hand_stable_start_time = 0.0
 
             self.last_hand_position = hand_position.copy()
 
@@ -142,6 +149,11 @@ class UnifiedHandTrackingState(BaseState):
 
     def _move_robot_toward_hand(self, hand_position, current_time):
         """Move robot toward hand centroid using command bus."""
+        # Stop moving if hand is in dead zone (stable)
+        if self.is_hand_stable:
+            logger.debug("Hand in dead zone - robot holding position")
+            return
+
         # Throttle movement updates
         if current_time - self.last_movement_time < self.movement_interval:
             return
@@ -184,12 +196,8 @@ class UnifiedHandTrackingState(BaseState):
                 f"Target (base) with offset: {target_position}, Δz={target_position[2]-current_z:.3f}")
             distance_to_target = np.linalg.norm(
                 target_position - current_position)
-
-            # Dead zone check - don't move if within stability threshold
-            if distance_to_target < HAND_STABILITY_THRESHOLD:
-                logger.debug(
-                    f"Within dead zone ({distance_to_target:.3f}m), not moving")
-                return
+            logger.debug(
+                f"Distance to target: {distance_to_target*1000:.1f}mm")
 
             # Solve inverse kinematics for target position
             target_joints = self.context.ik.solve_XYZ(

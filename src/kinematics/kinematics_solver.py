@@ -243,10 +243,6 @@ class InverseKinematicsSolver:
 
         # Call PyBullet IK
         try:
-            # Log the target orientation for debugging
-            if quat is not None:
-                logger.debug(f"Target quaternion (x,y,z,w): {quat}")
-
             sol = p.calculateInverseKinematics(
                 bodyUniqueId=self.robot_id,
                 endEffectorLinkIndex=self.end_effector_link_index,
