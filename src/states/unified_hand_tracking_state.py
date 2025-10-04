@@ -292,8 +292,7 @@ class UnifiedHandTrackingState(BaseState):
 
         # Check timeout (safety measure)
         elapsed_time = current_time - self.state_start_time
-        timeout_threshold = HAND_STABILITY_TIME_THRESHOLD * \
-            15  # 15x the stability threshold
+        timeout_threshold = 20.0  # 20 seconds timeout
         if elapsed_time > timeout_threshold:
             logger.warning("Hand tracking timeout reached")
             return True

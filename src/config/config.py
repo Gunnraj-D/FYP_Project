@@ -248,7 +248,7 @@ SAFETY_CONFIG = {
 ERROR_RECOVERY_CONFIG = {
     'max_retries': 3,
     'retry_delay': 1.0,
-    'timeout': 30.0
+    'timeout': 20.0
 }
 
 # ============================================================================

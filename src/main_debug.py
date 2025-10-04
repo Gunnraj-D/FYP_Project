@@ -343,7 +343,8 @@ class DebugSystemManager:
                 iteration += 1
 
                 # Safety timeout to prevent infinite hanging
-                if iteration > 100:  # 10 seconds timeout
+                # 20 seconds timeout (200 iterations * 0.1s)
+                if iteration > 200:
                     print("⚠️ Timeout reached, forcing completion")
                     break
 
