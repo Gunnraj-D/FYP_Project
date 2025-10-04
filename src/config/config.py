@@ -290,6 +290,24 @@ ERROR_RECOVERY_CONFIG = {
 }
 
 # ============================================================================
+# HAND-EYE CALIBRATION MATRIX
+# ============================================================================
+
+# Hand-eye transformation matrix (Camera to TCP)
+# Generated from 13 best calibration poses (pruned from 18 total poses)
+# Translation: 0.285m (reasonable ~28cm camera-to-TCP distance)
+# Mean calibration error: 0.652 (5x improvement over all poses)
+HAND_EYE_MATRIX = np.array([
+    [-0.9988,  0.0473,  0.0120,  0.0237],
+    [-0.0485, -0.9369, -0.3462, -0.0700],
+    [-0.0051, -0.3464,  0.9381,  0.2749],
+    [0.0000,  0.0000,  0.0000,  1.0000]
+], dtype=np.float32)
+
+# Hand-eye matrix file path (for loading from disk)
+HAND_EYE_MATRIX_FILE = "src/hand_eye_matrix.npy"
+
+# ============================================================================
 # LOGGING CONFIGURATION
 # ============================================================================
 LOGGING_CONFIG = {
