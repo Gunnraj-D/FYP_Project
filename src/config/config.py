@@ -67,7 +67,7 @@ OPC_MOCK_SERVER_URL = "opc.tcp://127.0.0.1:4840/"
 # Robot 2 -> namespace 22, nodes like R2d_Status, R2c_Joi1, etc.
 # Robot 3 -> namespace 23, nodes like R3d_Status, R3c_Joi1, etc.
 # Robot 4 -> namespace 24, nodes like R4d_Status, R4c_Joi1, etc.
-ROBOT_ID = 3  # Default to robot 1, can be changed to 1, 2, 3, or 4
+ROBOT_ID = 1  # Default to robot 1, can be changed to 1, 2, 3, or 4
 
 
 def get_robot_name(robot_id: int = ROBOT_ID) -> str:
@@ -99,6 +99,17 @@ ACTIVE_LINKS = [
     False,  # robotiq_85_base_link - fixed joint
     False   # tcp - fixed joint
 ]
+
+# Joint limits for KUKA LBR iiwa 14 (in radians)
+JOINT_LIMITS = {
+    'A1': {'min': -2.967, 'max': 2.967},    # ±170°
+    'A2': {'min': -2.094, 'max': 2.094},    # ±120°
+    'A3': {'min': -2.967, 'max': 2.967},    # ±170°
+    'A4': {'min': -2.094, 'max': 2.094},    # ±120°
+    'A5': {'min': -2.967, 'max': 2.967},    # ±170°
+    'A6': {'min': -2.094, 'max': 2.094},    # ±120°
+    'A7': {'min': -3.054, 'max': 3.054},    # ±175°
+}
 
 # ============================================================================
 # CAMERA CONFIGURATION

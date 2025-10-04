@@ -8,6 +8,7 @@ Provides forward and inverse kinematics and matching API:
 - solve_tcp(joint_angles_full)
 Note: Positions are expected in METERS for PyBullet.
 """
+from config.config import JOINT_LIMITS
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -20,6 +21,8 @@ from scipy.spatial.transform import Rotation as R
 
 # preserve same imports names as original file for ease of swapping
 logger = logging.getLogger(__name__)
+
+# Import joint limits from config
 
 
 def homogeneous_to_pose(T: np.ndarray) -> List[float]:
@@ -36,13 +39,57 @@ def homogeneous_to_pose(T: np.ndarray) -> List[float]:
 def get_facing_down_orientation() -> np.ndarray:
     """
     Returns the 3x3 rotation matrix for a tool facing straight down.
-    This corresponds to a 180-degree rotation around the world's X-axis.
+    This corresponds to a 180-degree rotation around the world's Z-axis.
     """
     return np.array([
         [1,  0,  0],
         [0, -1,  0],
         [0,  0, -1]
     ])
+
+
+def validate_joint_limits(joint_angles: List[float]) -> bool:
+    """
+    Validate that joint angles are within specified limits.
+    Returns True if all joints are within limits, False otherwise.
+    """
+    if len(joint_angles) != 7:
+        logger.warning(f"Expected 7 joint angles, got {len(joint_angles)}")
+        return False
+
+    joint_names = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7']
+
+    for i, (angle, joint_name) in enumerate(zip(joint_angles, joint_names)):
+        limits = JOINT_LIMITS[joint_name]
+        if angle < limits['min'] or angle > limits['max']:
+            logger.warning(
+                f"Joint {joint_name} (index {i}) angle {angle:.3f} exceeds limits [{limits['min']:.3f}, {limits['max']:.3f}]")
+            return False
+
+    return True
+
+
+def clamp_joint_limits(joint_angles: List[float]) -> List[float]:
+    """
+    Clamp joint angles to within specified limits.
+    Returns clamped joint angles.
+    """
+    if len(joint_angles) != 7:
+        logger.warning(f"Expected 7 joint angles, got {len(joint_angles)}")
+        return joint_angles
+
+    joint_names = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7']
+    clamped_angles = []
+
+    for angle, joint_name in zip(joint_angles, joint_names):
+        limits = JOINT_LIMITS[joint_name]
+        clamped_angle = np.clip(angle, limits['min'], limits['max'])
+        if clamped_angle != angle:
+            logger.warning(
+                f"Clamped joint {joint_name} from {angle:.3f} to {clamped_angle:.3f}")
+        clamped_angles.append(clamped_angle)
+
+    return clamped_angles
 
 
 class InverseKinematicsSolver:
@@ -180,6 +227,11 @@ class InverseKinematicsSolver:
             raise RuntimeError(
                 "URDF does not expose at least 7 revolute joints. Unable to map 7-joint vector.")
 
+        # Validate joint limits
+        if not validate_joint_limits(joint_angles_7):
+            logger.warning("Input joint angles violate limits, clamping...")
+            joint_angles_7 = clamp_joint_limits(joint_angles_7)
+
         # Build full revolute joint vector: use provided 7 values for first 7 revolute joints and zeros for the rest
         full_joint_vector = np.zeros(
             len(self.revolute_joint_indices), dtype=float)
@@ -281,6 +333,11 @@ class InverseKinematicsSolver:
             raise RuntimeError(
                 "IK returned fewer than 7 revolute joint values.")
         solution_7 = solution_revolute[:7]
+
+        # Validate joint limits
+        if not validate_joint_limits(solution_7.tolist()):
+            logger.warning("IK solution violates joint limits, clamping...")
+            solution_7 = np.array(clamp_joint_limits(solution_7.tolist()))
 
         # Optional: verify positional error
         # Apply solution to robot and compute actual TCP

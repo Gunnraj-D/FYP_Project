@@ -5,6 +5,7 @@ Provides clean interface for robot control operations with dedicated background 
 import asyncio
 from asyncua import Client, ua
 import logging
+import math
 import threading
 import time
 from typing import List, Optional, Dict, Any
@@ -20,6 +21,26 @@ from config.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def radians_to_degrees(radians: float) -> float:
+    """Convert radians to degrees."""
+    return radians * 180.0 / math.pi
+
+
+def degrees_to_radians(degrees: float) -> float:
+    """Convert degrees to radians."""
+    return degrees * math.pi / 180.0
+
+
+def convert_joints_rad_to_deg(joint_positions: List[float]) -> List[float]:
+    """Convert joint positions from radians to degrees."""
+    return [radians_to_degrees(angle) for angle in joint_positions]
+
+
+def convert_joints_deg_to_rad(joint_positions: List[float]) -> List[float]:
+    """Convert joint positions from degrees to radians."""
+    return [degrees_to_radians(angle) for angle in joint_positions]
 
 
 @dataclass
@@ -99,6 +120,9 @@ class OPCClient:
             self.running = False
             self._shutdown_event.set()
 
+            # Note: Start flag will be set to False in the async cleanup path
+            # The _stop_robot_program() is called in _main_loop() when connection ends
+
             if self.comm_thread and self.comm_thread.is_alive():
                 self.comm_thread.join(timeout=5.0)
                 if self.comm_thread.is_alive():
@@ -119,11 +143,12 @@ class OPCClient:
 
     async def _main_loop(self):
         """Main async communication loop with reconnection logic."""
+        logger.info("🔄 Starting OPC client main loop")
         while self.running and not self._shutdown_event.is_set():
             try:
+                logger.info(f"🔄 Attempting to connect to {self.config.url}")
                 async with Client(url=self.config.url) as self.client:
-                    self.client.set_session_timeout(
-                        self.config.connection_timeout * 1000)
+                    logger.info("✅ OPC client connected to server")
                     await self._initialize_nodes()
                     await self._start_robot_program()
 
@@ -131,62 +156,79 @@ class OPCClient:
                         self.connected = True
                         self._reconnect_attempts = 0
 
-                    # Update telemetry with connection status
                     self.telemetry.update_robot_status(
                         {'connected': True, 'status_code': 0})
+                    logger.info(
+                        "✅ OPC client connected, starting communication loop")
 
                     await self._communication_loop()
 
-            except Exception as e:
-                logger.error(f"OPC UA connection error: {e}")
+                    # Stop the program before disconnecting
+                    logger.info(
+                        "Communication loop ended. Stopping robot program...")
+                    await self._stop_robot_program()
 
+            except (ConnectionRefusedError, asyncio.TimeoutError) as e:
+                logger.warning(f"OPC UA connection failed: {e}")
+            except Exception as e:
+                logger.error(
+                    f"OPC UA main loop error: {e}", exc_info=True)
+            finally:
                 with self._lock:
                     self.connected = False
-                    self._reconnect_attempts += 1
-
-                # Update telemetry with disconnection status
-                self.telemetry.update_robot_status({
-                    'connected': False,
-                    'status_code': -1,
-                    'error_message': str(e)
-                })
-
-                if self._reconnect_attempts >= self.config.max_reconnect_attempts:
-                    logger.error(
-                        f"Max reconnection attempts ({self.config.max_reconnect_attempts}) reached")
-                    break
 
                 if self.running and not self._shutdown_event.is_set():
+                    self._reconnect_attempts += 1
+                    if self._reconnect_attempts >= self.config.max_reconnect_attempts:
+                        logger.error(
+                            f"Max reconnection attempts ({self.config.max_reconnect_attempts}) reached. Stopping client.")
+                        self.running = False
+                        break
+
+                    wait_time = min(self.config.reconnect_delay *
+                                    (2 ** self._reconnect_attempts), 10.0)
                     logger.info(
-                        f"Reconnecting in {self.config.reconnect_delay}s (attempt {self._reconnect_attempts})")
-                    await asyncio.sleep(self.config.reconnect_delay)
+                        f"Reconnecting in {wait_time:.1f}s (attempt {self._reconnect_attempts})")
+                    await asyncio.sleep(wait_time)
 
         # Cleanup on exit
+        logger.info("OPC client main loop finished.")
         await self._cleanup()
 
     async def _initialize_nodes(self):
-        """Initialize OPC UA node references."""
+        """Initialize OPC UA node references using direct node IDs."""
         try:
-            root = self.client.get_root_node()
-            objects = await root.get_child([self.config.objects_name])
-            robot = await objects.get_child([self.config.robot_name])
+            # Access nodes by their node IDs to match server structure
+            # Objects folder (ns=0;i=85)
+            objects = self.client.get_node("ns=0;i=85")
 
-            # Initialize joint write nodes (R{robot_id}c_Joi1 to R{robot_id}c_Joi7)
+            # Robot object with dynamic namespace and ID
+            robot = self.client.get_node(
+                f"ns={self.config.robot_namespace};i={self.config.robot_id}")
+
+            # Initialize joint write nodes (R{robot_id}c_Joi1 to R{robot_id}c_Joi7) with string identifiers
             for i in range(1, 8):
                 node_name = f"R{self.config.robot_id}c_Joi{i}"
-                self.joint_write_nodes[i] = await robot.get_child([node_name])
+                node_id = f"ns={self.config.robot_namespace};s={node_name}"
+                self.joint_write_nodes[i] = self.client.get_node(node_id)
 
-            # Initialize joint read nodes (R{robot_id}d_Joi1 to R{robot_id}d_Joi7)
+            # Initialize joint read nodes (R{robot_id}d_Joi1 to R{robot_id}d_Joi7) with string identifiers
             for i in range(1, 8):
                 node_name = f"R{self.config.robot_id}d_Joi{i}"
-                self.joint_read_nodes[i] = await robot.get_child([node_name])
+                node_id = f"ns={self.config.robot_namespace};s={node_name}"
+                self.joint_read_nodes[i] = self.client.get_node(node_id)
 
-            # Initialize control nodes
-            self.control_nodes['start'] = await robot.get_child([f"R{self.config.robot_id}c_Start"])
-            self.control_nodes['prog_id'] = await robot.get_child([f"R{self.config.robot_id}c_ProgID"])
-            self.control_nodes['status'] = await robot.get_child([f"R{self.config.robot_id}d_Status"])
-            self.control_nodes['gripper_control'] = await robot.get_child([f"R{self.config.robot_id}c_GripperAct"])
-            self.control_nodes['gripper_current'] = await robot.get_child([f"R{self.config.robot_id}d_GripperAct"])
+            # Initialize control nodes with string identifiers
+            self.control_nodes['start'] = self.client.get_node(
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}c_Start")
+            self.control_nodes['prog_id'] = self.client.get_node(
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}c_ProgID")
+            self.control_nodes['status'] = self.client.get_node(
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}d_Status")
+            self.control_nodes['gripper_control'] = self.client.get_node(
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}c_GripperAct")
+            self.control_nodes['gripper_current'] = self.client.get_node(
+                f"ns={self.config.robot_namespace};s=R{self.config.robot_id}d_GripperAct")
 
             logger.info(
                 f"OPC UA nodes initialized successfully for robot {self.config.robot_id}")
@@ -196,15 +238,19 @@ class OPCClient:
             raise
 
     async def _start_robot_program(self):
-        """Start the robot control program."""
+        """Start the robot control program using batch operations."""
         try:
-            # Set program ID (1 for joint control mode)
-            program_id = ua.Variant(1, ua.VariantType.Int32)
-            await self.control_nodes['prog_id'].write_value(program_id)
+            # Prepare nodes and values for batch write
+            nodes_to_write = [self.control_nodes['prog_id'],
+                              self.control_nodes['start']]
+            values_to_write = [
+                # program ID (1 for joint control mode)
+                ua.Variant(1, ua.VariantType.Int32),
+                ua.Variant(True, ua.VariantType.Boolean)  # start program
+            ]
 
-            # Start the program
-            start = ua.Variant(True, ua.VariantType.Boolean)
-            await self.control_nodes['start'].write_value(start)
+            # Perform batch write for control commands
+            await self.client.write_values(nodes_to_write, values_to_write)
 
             logger.info("Robot program started")
 
@@ -212,28 +258,39 @@ class OPCClient:
             logger.error(f"Failed to start robot program: {e}")
 
     async def _stop_robot_program(self):
-        """Stop the robot control program."""
+        """Stop the robot control program using batch operations."""
         try:
-            if 'start' in self.control_nodes and 'prog_id' in self.control_nodes:
-                # Stop the program
-                start = ua.Variant(False, ua.VariantType.Boolean)
-                await self.control_nodes['start'].write_value(start)
+            if self.client and self.connected:
+                logger.info("Writing 'stop' to robot program...")
 
-                # Reset program ID
-                program_id = ua.Variant(0, ua.VariantType.Int32)
-                await self.control_nodes['prog_id'].write_value(program_id)
+                # Prepare nodes and values for batch write
+                nodes_to_write = [self.control_nodes['start'],
+                                  self.control_nodes['prog_id']]
+                values_to_write = [
+                    ua.Variant(False, ua.VariantType.Boolean),  # stop program
+                    ua.Variant(0, ua.VariantType.Int32)  # reset program ID
+                ]
 
-                logger.info("Robot program stopped")
-
+                # Perform batch write for stop commands
+                await self.client.write_values(nodes_to_write, values_to_write)
+                logger.info("Robot program stopped successfully.")
+            else:
+                logger.warning(
+                    "Cannot stop robot program, client is not connected.")
         except Exception as e:
-            logger.error(f"Failed to stop robot program: {e}")
+            logger.error(
+                f"Failed to stop robot program during shutdown: {e}")
 
     async def _communication_loop(self):
         """Main communication loop with telemetry updates and command processing."""
         loop_interval = self.config.poll_interval_ms / 1000.0
+        loop_count = 0
+
+        logger.info("🔄 Starting OPC communication loop")
 
         while self.running and not self._shutdown_event.is_set():
             loop_start = time.time()
+            loop_count += 1
 
             try:
                 # 1. Read telemetry from robot
@@ -255,21 +312,56 @@ class OPCClient:
                     f"OPC loop exceeded target interval by {elapsed - loop_interval:.3f}s")
 
     async def _update_telemetry(self):
-        """Read robot state and update telemetry store."""
+        """Read robot state and update telemetry store using batch operations."""
         try:
-            # Read current joint positions
-            current_joints = await self._read_joint_positions()
-            if current_joints:
-                self.telemetry.update_current_joints(current_joints)
+            # Prepare all nodes for batch read
+            nodes_to_read = []
+            node_types = []
 
-            # Read robot status
-            status = await self._read_robot_status()
-            if status:
-                self.telemetry.update_robot_status(status)
+            # Add joint read nodes
+            for i in range(1, 8):
+                nodes_to_read.append(self.joint_read_nodes[i])
+                node_types.append('joint')
 
-            # Read gripper status
-            gripper_status = await self._read_gripper_status()
-            if gripper_status:
+            # Add robot status node
+            nodes_to_read.append(self.control_nodes['status'])
+            node_types.append('status')
+
+            # Add gripper current node
+            if 'gripper_current' in self.control_nodes:
+                nodes_to_read.append(self.control_nodes['gripper_current'])
+                node_types.append('gripper')
+
+            # Perform batch read
+            values = await self.client.read_values(nodes_to_read)
+
+            # Process results
+            joint_values = []
+            status_value = None
+            gripper_value = None
+
+            for i, (value, node_type) in enumerate(zip(values, node_types)):
+                if node_type == 'joint':
+                    joint_values.append(float(value))
+                elif node_type == 'status':
+                    status_value = value
+                elif node_type == 'gripper':
+                    gripper_value = value
+
+            # Update telemetry with batch results
+            if joint_values:
+                # Convert joint values from degrees (server) to radians (application)
+                joint_values_rad = convert_joints_deg_to_rad(joint_values)
+                self.telemetry.update_current_joints(joint_values_rad)
+
+            if status_value is not None:
+                self.telemetry.update_robot_status({
+                    'connected': True,
+                    'status_code': int(status_value)
+                })
+
+            if gripper_value is not None:
+                gripper_status = "close" if bool(gripper_value) else "open"
                 self.telemetry.update_current_gripper_status(gripper_status)
 
         except Exception as e:
@@ -283,11 +375,12 @@ class OPCClient:
             if not commands:
                 return  # No commands to process
 
-            logger.debug(
+            logger.info(
                 f"Processing {len(commands)} commands from CommandBus")
 
             # Process commands sequentially to preserve order
             for command in commands[:self.config.command_batch_size]:
+                logger.info(f"Executing command: {type(command).__name__}")
                 await self._execute_command(command)
 
         except Exception as e:
@@ -310,7 +403,7 @@ class OPCClient:
                 f"Failed to execute command {type(command).__name__}: {e}")
 
     async def _write_joint_positions(self, joint_positions: List[float]):
-        """Write joint positions with redundant write detection."""
+        """Write joint positions with redundant write detection using batch operations."""
         if not self.connected or not self.client:
             return
 
@@ -322,11 +415,22 @@ class OPCClient:
                 self._last_joint_values = joint_positions.copy()
 
         try:
+            # Convert joint positions from radians to degrees for OPC server
+            joint_positions_deg = convert_joints_rad_to_deg(joint_positions)
+
+            # Prepare nodes and values for batch write
+            nodes_to_write = []
+            values_to_write = []
+
+            # Prepare write nodes (R{robot_id}c_Joi1-7) - target positions in degrees
             for i in range(1, 8):
-                if i <= len(joint_positions):
-                    value = ua.Variant(
-                        float(joint_positions[i-1]), ua.VariantType.Double)
-                    await self.joint_write_nodes[i].write_value(value)
+                if i <= len(joint_positions_deg):
+                    nodes_to_write.append(self.joint_write_nodes[i])
+                    values_to_write.append(ua.Variant(
+                        float(joint_positions_deg[i-1]), ua.VariantType.Double))
+
+            # Perform batch write for all joint nodes
+            await self.client.write_values(nodes_to_write, values_to_write)
 
             logger.debug(f"Wrote joint positions: {joint_positions}")
 
@@ -334,7 +438,7 @@ class OPCClient:
             logger.error(f"Failed to write joint positions: {e}")
 
     async def _write_gripper_status(self, status: str):
-        """Write gripper status with redundant write detection."""
+        """Write gripper status with redundant write detection using batch operations."""
         if not self.connected or not self.client:
             return
 
@@ -349,14 +453,23 @@ class OPCClient:
             # "open" = False (gripper open), "close" = True (gripper closed)
             gripper_value = status.lower() == "close"
 
-            # Write to gripper control node
+            # Prepare nodes and values for batch write
+            nodes_to_write = []
+            values_to_write = []
+
+            # Add gripper control node
             if 'gripper_control' in self.control_nodes:
-                value = ua.Variant(gripper_value, ua.VariantType.Boolean)
-                await self.control_nodes['gripper_control'].write_value(value)
-                logger.debug(
-                    f"Wrote gripper control: {gripper_value} (status: {status})")
+                nodes_to_write.append(self.control_nodes['gripper_control'])
+                values_to_write.append(ua.Variant(
+                    gripper_value, ua.VariantType.Boolean))
             else:
                 logger.warning("Gripper control node not available")
+
+            # Perform batch write for gripper nodes
+            if nodes_to_write:
+                await self.client.write_values(nodes_to_write, values_to_write)
+                logger.debug(
+                    f"Wrote gripper control: {gripper_value} (status: {status})")
 
         except Exception as e:
             logger.error(f"Failed to write gripper status: {e}")
@@ -377,13 +490,21 @@ class OPCClient:
             logger.error(f"Failed to handle emergency stop: {e}")
 
     async def _read_joint_positions(self) -> Optional[List[float]]:
-        """Read current joint positions from robot."""
+        """Read current joint positions from robot using batch read."""
         try:
-            current_joints = []
-            for i in range(1, 8):
-                value = await self.joint_read_nodes[i].read_value()
-                current_joints.append(float(value))
-            return current_joints
+            # Prepare nodes for batch read
+            nodes_to_read = [self.joint_read_nodes[i] for i in range(1, 8)]
+
+            # Perform batch read
+            values = await self.client.read_values(nodes_to_read)
+
+            # Convert to float list (values are in degrees from server)
+            current_joints_deg = [float(value) for value in values]
+
+            # Convert from degrees to radians for application
+            current_joints_rad = convert_joints_deg_to_rad(current_joints_deg)
+
+            return current_joints_rad
 
         except Exception as e:
             logger.error(f"Failed to read joint positions: {e}")
@@ -424,9 +545,16 @@ class OPCClient:
     async def _cleanup(self):
         """Cleanup resources on shutdown."""
         try:
-            await self._stop_robot_program()
+            # Only attempt cleanup if we have a valid connection
+            if self.connected and self.client and self.control_nodes:
+                await self._stop_robot_program()
+            else:
+                logger.debug(
+                    "Skipping cleanup - not connected or nodes not available")
         except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+            # Silently ignore cleanup errors during shutdown
+            logger.debug(f"Cleanup error (ignored): {e}")
+            pass
 
     def is_connected(self) -> bool:
         """Check if OPC UA client is connected and running."""

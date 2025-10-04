@@ -113,7 +113,7 @@ class HandTracker:
             logger.error(f"Palm calculation error: {e}")
             return None, None
 
-    def _draw_results(self, frame, landmarks, palm_pos, depth, vector_3d):
+    def _draw_results(self, frame, landmarks, palm_pos, depth, vector_3d_cam):
         """Draw all visualization elements."""
         h, w = frame.shape[:2]
 
@@ -143,8 +143,23 @@ class HandTracker:
             cv2.circle(frame, (flipped_x, palm_y), radius, (255, 255, 0), 2)
             cv2.putText(frame, f"Depth: {depth:.2f}m", (10, 70),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-            cv2.putText(frame, f"3D: ({vector_3d[0]:.2f}, {vector_3d[1]:.2f}, {vector_3d[2]:.2f})",
+            cv2.putText(frame, f"Cam: ({vector_3d_cam[0]:.2f}, {vector_3d_cam[1]:.2f}, {vector_3d_cam[2]:.2f})",
                         (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+            # Show TCP-relative coordinates (now stored as primary camera vector)
+            try:
+                vector_3d_tcp = self.telemetry.get_camera_vector()
+                if vector_3d_tcp != [0.0, 0.0, 0.0]:
+                    cv2.putText(frame, f"TCP: ({vector_3d_tcp[0]:.2f}, {vector_3d_tcp[1]:.2f}, {vector_3d_tcp[2]:.2f})",
+                                (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    # Calculate distance to target in TCP frame
+                    target_tcp = np.array([0.0, 0.0, 0.25])  # 25cm above TCP
+                    distance_tcp = np.linalg.norm(
+                        np.array(vector_3d_tcp) - target_tcp)
+                    cv2.putText(frame, f"Dist to target: {distance_tcp*1000:.1f}mm",
+                                (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            except Exception as e:
+                logger.debug(f"Failed to display TCP coordinates: {e}")
 
     def start(self):
         """Start hand tracking in background thread."""
@@ -203,7 +218,7 @@ class HandTracker:
                 # Process results
                 palm_pos = None
                 depth = 0
-                vector_3d = [0.0, 0.0, 0.0]
+                vector_3d_cam = [0.0, 0.0, 0.0]
 
                 if (self.latest_result and
                     self.latest_result.hand_landmarks and
@@ -224,17 +239,31 @@ class HandTracker:
 
                         if depth > 0:
                             # Use shared camera manager for 3D conversion
-                            vector_3d = self.camera_manager.pixel_to_3d(
+                            vector_3d_cam = self.camera_manager.pixel_to_3d(
                                 palm_x, palm_y, depth)
-                            self.telemetry.update_camera_vector(vector_3d)
+
+                            # Calculate TCP-relative coordinates and store as primary camera vector
+                            try:
+                                from camera_management.camera_transform_module import transform_camera_to_tcp_frame
+                                vector_3d_tcp = transform_camera_to_tcp_frame(
+                                    vector_3d_cam)
+                                # Store TCP-relative coordinates as the primary camera vector
+                                self.telemetry.update_camera_vector(
+                                    vector_3d_tcp)
+                            except Exception as e:
+                                logger.debug(
+                                    f"Failed to calculate TCP-relative coordinates: {e}")
+                                # Fallback to camera coordinates if transformation fails
+                                self.telemetry.update_camera_vector(
+                                    vector_3d_cam)
 
                             radius_vector = self.camera_manager.pixel_to_3d(
                                 palm_x - pixel_radius, palm_y, depth)
-                            actual_radius = vector_3d[0] - radius_vector[0]
+                            actual_radius = vector_3d_cam[0] - radius_vector[0]
                             self.telemetry.update_radius(actual_radius)
                             palm_pos = (palm_x, palm_y, pixel_radius)
                 else:
-                    self.telemetry.update_camera_vector(vector_3d)
+                    self.telemetry.update_camera_vector(vector_3d_cam)
 
                 # Create display frame
                 display_frame = cv2.flip(color_frame, 1)
@@ -242,7 +271,7 @@ class HandTracker:
                 # Draw everything
                 landmarks = self.latest_result.hand_landmarks if self.latest_result else None
                 self._draw_results(display_frame, landmarks,
-                                   palm_pos, depth, vector_3d)
+                                   palm_pos, depth, vector_3d_cam)
 
                 # FPS
                 current_time = time.time()

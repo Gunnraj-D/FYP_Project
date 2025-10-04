@@ -108,20 +108,22 @@ class UnifiedHandTrackingState(BaseState):
             logger.error(f"Error in UnifiedHandTrackingState execution: {e}")
 
     def _update_hand_tracking(self, hand_position):
-        """Update hand tracking state and check stability based on dead zone."""
+        """Update hand tracking state and check stability based on dead zone relative to TCP."""
         try:
             # Store live hand pose in telemetry
             # Convert from camera vector format to pose format [x, y, z, rx, ry, rz]
             live_hand_pose = hand_position + [0.0, 0.0, 0.0]
             self.context.telemetry.set_live_hand_pose(live_hand_pose)
 
-            # Check if hand is within the 3D dead zone
-            # Dead zone is centered on camera optical axis (0, 0) at desired distance
-            hand_pos = np.array(hand_position)
-            target_pos = np.array([0.0, 0.0, DISTANCE_TO_REMAIN_M])
+            # hand_position is now already in TCP frame (from hand detection module)
+            hand_pos_tcp = np.array(hand_position)
 
-            # Calculate 3D distance from hand to target position
-            distance_from_target = np.linalg.norm(hand_pos - target_pos)
+            # Dead zone is relative to TCP: hand should be at [0, 0, DISTANCE_TO_REMAIN_M] in TCP frame
+            target_pos_tcp = np.array([0.0, 0.0, DISTANCE_TO_REMAIN_M])
+
+            # Calculate 3D distance from hand to target position in TCP frame
+            distance_from_target = np.linalg.norm(
+                hand_pos_tcp - target_pos_tcp)
 
             # Use 2cm threshold for dead zone (can be adjusted)
             dead_zone_threshold = 0.02  # 2cm
@@ -132,13 +134,13 @@ class UnifiedHandTrackingState(BaseState):
                     self.is_hand_stable = True
                     self.hand_stable_start_time = time.time()
                     logger.info(
-                        f"Hand entered dead zone (distance: {distance_from_target*1000:.1f}mm from target)")
+                        f"Hand entered dead zone (distance: {distance_from_target*1000:.1f}mm from TCP target)")
                 # Hand remains stable - timer continues
             else:
                 # Reset stability if hand exits dead zone
                 if self.is_hand_stable:
                     logger.info(
-                        f"Hand exited dead zone (distance: {distance_from_target*1000:.1f}mm from target)")
+                        f"Hand exited dead zone (distance: {distance_from_target*1000:.1f}mm from TCP target)")
                 self.is_hand_stable = False
                 self.hand_stable_start_time = 0.0
 
@@ -146,6 +148,16 @@ class UnifiedHandTrackingState(BaseState):
 
         except Exception as e:
             logger.error(f"Error updating hand tracking: {e}")
+
+    def _transform_camera_to_tcp(self, camera_position, tcp_matrix):
+        """Transform position from camera frame to TCP frame using hand-eye matrix."""
+        try:
+            # Use the calibrated hand-eye matrix to transform camera to TCP
+            from camera_management.camera_transform_module import transform_camera_to_tcp_frame
+            return transform_camera_to_tcp_frame(camera_position)
+        except Exception as e:
+            logger.error(f"Error transforming camera to TCP: {e}")
+            return np.array([0.0, 0.0, 0.0])
 
     def _move_robot_toward_hand(self, hand_position, current_time):
         """Move robot toward hand centroid using command bus."""
@@ -169,39 +181,39 @@ class UnifiedHandTrackingState(BaseState):
             current_tcp_matrix, current_tcp_pose = self.context.ik.tcp_from_joints(
                 current_joints)
 
-            # Transform hand position from camera to base frame (diagnostics)
-            logger.info(f"Hand (camera): {hand_position}")
-            logger.info(f"TCP (base): pos={current_tcp_pose[:3]}")
-            hand_position_base = transform_camera_to_base(
-                hand_position, current_tcp_matrix)
-            logger.info(f"Hand (base): {hand_position_base}")
+            # hand_position is now already in TCP frame (from hand detection module)
+            hand_pos_tcp = np.array(hand_position)
 
-            # Calculate target position with height offset
-            target_position = hand_position_base.copy()
-            # Desired Z = hand_z + offset (stay above hand)
-            hand_z = hand_position_base[2]
-            desired_z = hand_z + DISTANCE_TO_REMAIN_M
+            # Target in TCP frame: hand should be at [0, 0, DISTANCE_TO_REMAIN_M]
+            target_pos_tcp = np.array([0.0, 0.0, DISTANCE_TO_REMAIN_M])
+
+            # Calculate distance to target in TCP frame
+            distance_to_target_tcp = np.linalg.norm(
+                hand_pos_tcp - target_pos_tcp)
+
+            # Log TCP-relative distances for quality assessment
+            logger.info(f"Hand (TCP): {hand_pos_tcp}")
+            logger.info(f"Target (TCP): {target_pos_tcp}")
+            logger.info(
+                f"Distance to target (TCP): {distance_to_target_tcp*1000:.1f}mm")
+
+            # Convert TCP-relative target to base frame for IK solving
+            # The target in base frame is: current_TCP + (target_pos_tcp - hand_pos_tcp)
+            tcp_offset = target_pos_tcp - hand_pos_tcp
+            target_position_base = current_tcp_pose[:3] + tcp_offset
+
             # Clamp to workspace floor at z >= 0 (meters)
             workspace_floor_z = 0.0
-            if desired_z < workspace_floor_z:
+            if target_position_base[2] < workspace_floor_z:
                 logger.warning(
-                    f"Clamping target Z from {desired_z:.3f} to workspace floor {workspace_floor_z:.3f}")
-                desired_z = workspace_floor_z
-            target_position[2] = desired_z
-            current_z = current_tcp_pose[:3][2]
+                    f"Clamping target Z from {target_position_base[2]:.3f} to workspace floor {workspace_floor_z:.3f}")
+                target_position_base[2] = workspace_floor_z
 
-            # Calculate distance to target
-            current_position = current_tcp_pose[:3]  # x, y, z
-            logger.info(
-                f"Target (base) with offset: {target_position}, Δz={target_position[2]-current_z:.3f}")
-            distance_to_target = np.linalg.norm(
-                target_position - current_position)
-            logger.debug(
-                f"Distance to target: {distance_to_target*1000:.1f}mm")
+            logger.info(f"Target (base): {target_position_base}")
 
             # Solve inverse kinematics for target position
             target_joints = self.context.ik.solve_XYZ(
-                target_position, current_joints, get_facing_down_orientation())
+                target_position_base, current_joints, get_facing_down_orientation())
 
             if target_joints is not None:
                 # Send movement command via command bus
@@ -209,7 +221,8 @@ class UnifiedHandTrackingState(BaseState):
                 self.last_movement_time = current_time
                 logger.debug(
                     f"Moving toward hand: target joints {target_joints}")
-                logger.debug(f"Distance to target: {distance_to_target:.3f}m")
+                logger.debug(
+                    f"Distance to target (TCP): {distance_to_target_tcp:.3f}m")
             else:
                 logger.warning(
                     "Failed to solve inverse kinematics for target position")
@@ -218,7 +231,7 @@ class UnifiedHandTrackingState(BaseState):
             logger.error(f"Error in robot movement: {e}")
 
     def _calculate_placement_pose(self, hand_position):
-        """Calculate final placement pose for object handoff."""
+        """Calculate final placement pose for object handoff using TCP-relative coordinates."""
         try:
             # Get current robot position for transformation
             current_joints = self.context.telemetry.get_current_joints()
@@ -231,18 +244,19 @@ class UnifiedHandTrackingState(BaseState):
             current_tcp_matrix, current_tcp_pose = self.context.ik.tcp_from_joints(
                 current_joints)
 
-            # Transform hand position from camera frame to base frame
-            hand_position_base = transform_camera_to_base(
-                hand_position, current_tcp_matrix)
+            # hand_position is now already in TCP frame (from hand detection module)
+            hand_pos_tcp = np.array(hand_position)
 
             # Get pickup height offset from telemetry
             pickup_height_offset = self.context.telemetry.get_pickup_height_offset()
 
-            # Calculate placement pose by offsetting hand position upward
-            # This ensures the robot places the object at a safe height above the palm
-            placement_pose = hand_position_base.copy()
-            # pickup_height_offset is already in meters
-            placement_pose[2] += pickup_height_offset
+            # Calculate placement pose in TCP frame: hand position + height offset
+            placement_pose_tcp = hand_pos_tcp.copy()
+            placement_pose_tcp[2] += pickup_height_offset
+
+            # Convert TCP-relative placement pose to base frame
+            placement_pose_base = current_tcp_pose[:3] + \
+                (placement_pose_tcp - hand_pos_tcp)
 
             # Add rotation components using the standard facing-down orientation
             from scipy.spatial.transform import Rotation as R
@@ -250,7 +264,8 @@ class UnifiedHandTrackingState(BaseState):
             facing_down_rpy = R.from_matrix(facing_down_matrix).as_euler('xyz')
 
             # [x, y, z, rx, ry, rz] in radians
-            full_placement_pose = list(placement_pose) + list(facing_down_rpy)
+            full_placement_pose = list(
+                placement_pose_base) + list(facing_down_rpy)
 
             # Store calculated handoff pose in telemetry
             self.context.telemetry.set_calculated_handoff_pose(
@@ -258,7 +273,7 @@ class UnifiedHandTrackingState(BaseState):
 
             logger.debug(f"Placement pose calculated: {full_placement_pose}")
             logger.debug(
-                f"Hand position: {hand_position}, Height offset: {pickup_height_offset:.3f}m")
+                f"Hand (TCP): {hand_pos_tcp}, Height offset: {pickup_height_offset:.3f}m")
 
         except Exception as e:
             logger.error(f"Error calculating placement pose: {e}")

@@ -52,7 +52,8 @@ logging.getLogger('states.task_orchestrator').setLevel(logging.ERROR)
 # Allow MoveToState INFO logs like the IK solver
 logging.getLogger('states.move_to_state').setLevel(logging.INFO)
 logging.getLogger('control.telemetry_store').setLevel(logging.ERROR)
-logging.getLogger('IO_handling.opc_client_factory').setLevel(logging.ERROR)
+logging.getLogger('IO_handling.opc_client_factory').setLevel(logging.INFO)
+logging.getLogger('IO_handling.opc_client').setLevel(logging.INFO)
 
 # Suppress additional noisy loggers
 warnings.filterwarnings("ignore", category=UserWarning,
@@ -162,7 +163,7 @@ class DebugSystemManager:
             # Create a state machine for debug execution
             self.state_machine = StateMachine(
                 initial_state=MoveToState(
-                    self.context, target_location=(0.5, 0.0, 0.6)),  # Reasonable position in meters
+                    self.context, target_location=(0.3, 0.415, 0.24)),  # Updated position 1 in meters
                 on_state_completion=self._on_state_completion
             )
 
@@ -277,9 +278,9 @@ class DebugSystemManager:
         """Get dictionary of available states for execution."""
         states = {
             # Reasonable position in workspace
-            1: MoveToState(self.context, target_location=(0.5, 0.0, 0.6)),
-            # Another reasonable position
-            2: MoveToState(self.context, target_location=(0.6, 0.3, 0.5)),
+            1: MoveToState(self.context, target_location=(0.3, 0.415, 0.24)),
+            # Updated second position
+            2: MoveToState(self.context, target_location=(0.39, 0.06, 0.1)),
             3: GripperControlState(self.context, action='open'),
             4: GripperControlState(self.context, action='close'),
             5: UnifiedHandTrackingState(self.context),
@@ -522,10 +523,10 @@ class DebugSystemManager:
             # Create fresh state instance based on state number
             if state_num == 1:
                 state = MoveToState(
-                    self.context, target_location=(0.5, 0.0, 0.6))
+                    self.context, target_location=(0.3, 0.415, 0.24))
             elif state_num == 2:
                 state = MoveToState(
-                    self.context, target_location=(0.6, 0.3, 0.5))
+                    self.context, target_location=(0.39, 0.06, 0.1))
             elif state_num == 3:
                 state = GripperControlState(self.context, action='open')
             elif state_num == 4:

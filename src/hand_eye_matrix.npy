@@ -1,0 +1,20 @@
+import numpy as np
+
+# Create a reasonable hand-eye calibration matrix for hand tracking
+# This is a fallback matrix when calibration data is not available
+# Camera is positioned at TCP level, looking forward for hand tracking
+
+# Identity matrix with small translation offset
+# Camera is essentially at TCP position for hand tracking
+hand_eye_matrix = np.array([
+    [1.0, 0.0, 0.0, 0.0],    # Camera X -> TCP X (no rotation)
+    [0.0, 1.0, 0.0, 0.0],    # Camera Y -> TCP Y (no rotation)  
+    [0.0, 0.0, 1.0, 0.0],    # Camera Z -> TCP Z (no rotation)
+    [0.0, 0.0, 0.0, 1.0]     # Homogeneous coordinate
+])
+
+# Save the matrix
+np.save('hand_eye_matrix.npy', hand_eye_matrix)
+print("Created fallback hand-eye calibration matrix")
+print("Matrix:")
+print(hand_eye_matrix)
