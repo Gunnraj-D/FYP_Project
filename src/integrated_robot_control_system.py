@@ -15,7 +15,7 @@ from camera_management.camera_manager import CameraManager, CameraConfig
 from IO_handling.opc_client_factory import OPCClientFactory, OPCConfig
 from hand_detection.hand_detection_module import HandTracker, HandTrackingConfig
 from object_detection.ggcnn2_module import GGcnn2Module
-from kinematics.kinematics_solver import InverseKinematicsSolver
+from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
 from states.state_machine import StateMachine
 from states.context import StateContext
 from states.task_orchestrator import TaskOrchestrator, TaskPhase
@@ -88,9 +88,9 @@ class IntegratedRobotControlSystem:
         self.opc_client = OPCClientFactory.create_client(
             self.command_bus, self.telemetry, None, opc_mode)
 
-        # Initialize kinematics solver
-        self.kinematics_solver = InverseKinematicsSolver(
-            URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS
+        # Initialize collision-aware kinematics solver
+        self.kinematics_solver = CollisionAwareKinematicsSolver(
+            URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS, use_gui=False, table_id=None
         )
 
         # Initialize hand tracker

@@ -13,7 +13,8 @@ from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager
 from camera_management.camera_transform_module import transform_camera_to_base
-from kinematics.kinematics_solver import InverseKinematicsSolver, get_facing_down_orientation
+from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
+from kinematics.kinematics_solver import get_facing_down_orientation
 from object_detection.ggcnn2 import GGCNN2
 from config.config import GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE, DEBUG_CONFIG
 
@@ -34,7 +35,7 @@ class GGcnn2Module:
     """
 
     def __init__(self, model_path: str, telemetry: Telemetry, command_bus: CommandBus,
-                 camera_manager: CameraManager, kinematics_solver: InverseKinematicsSolver):
+                 camera_manager: CameraManager, kinematics_solver: CollisionAwareKinematicsSolver):
         self.telemetry = telemetry
         self.command_bus = command_bus
         self.camera_manager = camera_manager

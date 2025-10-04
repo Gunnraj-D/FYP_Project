@@ -11,7 +11,7 @@ from IO_handling.opc_client_factory import OPCClientFactory
 from IO_handling.opc_client import OPCClient, OPCConfig
 from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus, SetJoints
-from kinematics.kinematics_solver import InverseKinematicsSolver
+from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
 from camera_management.camera_manager import CameraManager, CameraConfig
 import cv2
 import numpy as np
@@ -94,12 +94,13 @@ class HandEyeCalibrator:
                 logger.error("Failed to initialize camera")
                 return False
 
-            # Initialize kinematics solver
-            self.kinematics_solver = InverseKinematicsSolver(
+            # Initialize collision-aware kinematics solver
+            self.kinematics_solver = CollisionAwareKinematicsSolver(
                 urdf_filepath=self.config.urdf_filepath,
                 base_elements=self.config.base_elements,
                 active_links_mask=self.config.active_links,
-                use_gui=False
+                use_gui=False,
+                table_id=None  # No table collision detection during calibration
             )
 
             # Initialize robot communication
@@ -115,7 +116,7 @@ class HandEyeCalibrator:
                     command_bus, telemetry, opc_config)
             else:
                 self.robot_client = OPCClient(
-                    command_bus, telemetry, opc_config)
+                command_bus, telemetry, opc_config)
 
             self.robot_client.start()
 
@@ -593,10 +594,10 @@ class HandEyeCalibrator:
         return error
 
     def _perform_hand_eye_calibration(self) -> bool:
-        """Perform hand-eye calibration using absolute poses."""
+        """Perform hand-eye calibration using relative motion pairs (A2/B4)."""
         try:
             logger.info(
-                "Performing hand-eye calibration using absolute poses...")
+                "Performing hand-eye calibration (relative motions A2/B4)...")
 
             poses_used = self.calibration_data['poses_used']
             R_target2cam = self.calibration_data['R_target2cam']
@@ -607,33 +608,36 @@ class HandEyeCalibrator:
                     f"Insufficient data for calibration: {len(poses_used)} poses")
                 return False
 
+            # Build relative motions between consecutive samples
             def to_h(R: np.ndarray, t: np.ndarray) -> np.ndarray:
                 H = np.eye(4)
                 H[:3, :3] = R
                 H[:3, 3] = t.reshape(3)
                 return H
 
+            Tg = [np.array(P) for P in poses_used]  # base->tcp per sample
+            T_t2c = [to_h(np.array(R), np.array(t))
+                     for R, t in zip(R_target2cam, t_target2cam)]  # target->cam
+            T_c2t = [np.linalg.inv(T) for T in T_t2c]  # cam->target
+
+            # A2: inv(Tg_{i+1}) @ Tg_i
+            A_list = [np.linalg.inv(Tg[i+1]) @ Tg[i]
+                      for i in range(len(Tg) - 1)]
+            # B4: inv(T_c2t_{i+1}) @ T_c2t_i
+            B_list = [np.linalg.inv(T_c2t[i+1]) @ T_c2t[i]
+                      for i in range(len(T_c2t) - 1)]
+
             def split_RT(T_list):
                 R_list = [T[:3, :3] for T in T_list]
                 t_list = [T[:3, 3] for T in T_list]
                 return R_list, t_list
 
-            # Get absolute gripper poses (base -> gripper)
-            Tg = [np.array(P) for P in poses_used]  # base->tcp per sample
-            R_gripper2base, t_gripper2base = split_RT(Tg)
+            Rg, tg = split_RT(A_list)
+            Rt, tt = split_RT(B_list)
 
-            # Get absolute target poses (camera -> target)
-            # Note: We have target->cam, so we need to invert them first
-            T_target2cam_list = [to_h(np.array(R), np.array(t))
-                                 for R, t in zip(R_target2cam, t_target2cam)]
-            T_cam2target_list = [np.linalg.inv(T) for T in T_target2cam_list]
-            R_target2cam_abs, t_target2cam_abs = split_RT(T_cam2target_list)
-
-            # Perform hand-eye calibration with absolute poses
+            # Perform hand-eye calibration
             R_cam2tcp, t_cam2tcp = cv2.calibrateHandEye(
-                R_gripper2base, t_gripper2base,
-                R_target2cam_abs, t_target2cam_abs,
-                method=self.config.calibration_method
+                Rg, tg, Rt, tt, method=self.config.calibration_method
             )
 
             # Create hand-eye transformation matrix
@@ -641,14 +645,13 @@ class HandEyeCalibrator:
             self.H_cam2tcp[:3, :3] = R_cam2tcp
             self.H_cam2tcp[:3, 3] = t_cam2tcp.flatten()
 
-            logger.info(
-                "Hand-eye calibration completed successfully (absolute poses)")
+            logger.info("Hand-eye calibration completed successfully (A2/B4)")
             logger.info(f"Hand-eye transformation matrix:\n{self.H_cam2tcp}")
 
             return True
 
         except Exception as e:
-            logger.error(f"Hand-eye calibration failed: {e}")
+            logger.error(f"Hand-eye calibration failed (A2/B4): {e}")
             return False
 
     def _validate_calibration(self) -> Dict[str, Any]:
@@ -683,12 +686,15 @@ class HandEyeCalibrator:
                 validation_results, self.H_cam2tcp, self.config.calibration_report_file
             )
 
-            # Create validation plots using actual consistency errors from validation
-            consistency_errors = validation_results.get(
-                'consistency_errors', [])
+            # Create validation plots
             self.validator.create_validation_plots(
                 self.calibration_data['reprojection_errors'],
-                consistency_errors,
+                [np.linalg.norm(A @ self.H_cam2tcp - self.H_cam2tcp @ B, 'fro')
+                 for A, B in zip(
+                     [np.eye(4)
+                      for _ in self.calibration_data['R_gripper2base']],
+                     [np.eye(4) for _ in self.calibration_data['R_target2cam']]
+                )],
                 f"calibration_validation_plots.png"
             )
 

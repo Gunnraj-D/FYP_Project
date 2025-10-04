@@ -245,6 +245,44 @@ SAFETY_CONFIG = {
     'emergency_deceleration': 2.0
 }
 
+# ============================================================================
+# COLLISION-AWARE KINEMATICS CONFIGURATION
+# ============================================================================
+
+# Collision avoidance parameters
+COLLISION_AVOIDANCE_CONFIG = {
+    # Height above target for pre-approach (meters)
+    'pre_approach_height_offset': 0.10,
+    # Minimum clearance from table (meters)
+    'min_clearance_distance': 0.02,
+    # Distance for collision checking (meters)
+    'collision_check_distance': 0.05,
+    # Number of interpolation steps for trajectory
+    'trajectory_interpolation_steps': 50,
+    'max_ik_candidates': 5,                  # Maximum number of IK candidates to sample
+    'nullspace_weight': 0.1,                 # Weight for nullspace bias in IK
+}
+
+# Rest poses for nullspace IK (keeps elbow up and away from table)
+REST_POSES = {
+    # Elbow up configuration
+    'high_elbow_1': [0.0, -1.57, 0.0, 1.57, 0.0, 1.57, 0.0],
+    # Alternative high elbow
+    'high_elbow_2': [0.0, -1.2, 0.0, 1.2, 0.0, 1.2, 0.0],
+    # Neutral configuration
+    'neutral': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    # Safe approach pose
+    'safe_approach': [0.0, -0.5, 0.0, 1.0, 0.0, 0.5, 0.0],
+}
+
+# Key links for collision checking (forearm, wrist, camera, etc.)
+COLLISION_CHECK_LINKS = {
+    'forearm': 3,      # Link index for forearm
+    'wrist': 5,        # Link index for wrist
+    'camera': 6,       # Link index for camera/TCP
+    'gripper': 7,      # Link index for gripper
+}
+
 ERROR_RECOVERY_CONFIG = {
     'max_retries': 3,
     'retry_delay': 1.0,
