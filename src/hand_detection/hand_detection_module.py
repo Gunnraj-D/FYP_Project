@@ -230,7 +230,10 @@ class HandTracker:
                     if centroid is not None:
                         h, w = color_frame.shape[:2]
                         palm_x = int(centroid[0] * w)
-                        palm_y = int(centroid[1] * h)
+                        # Flip Y coordinate: MediaPipe Y (0=top, 1=bottom) -> Pixel Y (0=top, h=bottom)
+                        # But we need Y to point "down" in camera frame to match robot frame
+                        # Flip Y coordinate
+                        palm_y = int((1.0 - centroid[1]) * h)
                         pixel_radius = int(radius * min(w, h))
 
                         # Use shared camera manager for depth calculation
