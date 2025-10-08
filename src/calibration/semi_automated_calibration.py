@@ -36,6 +36,12 @@ class SemiAutomatedCalibrator:
         self.config = config or CalibrationConfig()
         self.pose_generator = PoseGenerator(self.config)
 
+        # Try to load existing hand-eye matrix for improved pose generation
+        if self.pose_generator.load_hand_eye_matrix():
+            print("🎯 Using camera-centric pose generation with hand-eye matrix")
+        else:
+            print("⚠️ Using legacy TCP-centric pose generation")
+
         # System components
         self.camera_manager = None
         self.kinematics_solver = None
@@ -195,11 +201,19 @@ class SemiAutomatedCalibrator:
                 f"Starting semi-automated calibration with {num_poses} poses")
 
             # Generate poses targeting the checkerboard
-            poses = self.pose_generator.generate_poses(
-                num_poses,
-                target_position=self.target_position,
-                robot_base_z=self.robot_base_z
-            )
+            if self.pose_generator.hand_eye_matrix is not None:
+                # Use camera-centric approach with hand-eye matrix
+                poses = self.pose_generator.generate_camera_centric_poses(
+                    num_poses,
+                    target_position=self.target_position
+                )
+            else:
+                # Fallback to legacy TCP-centric approach
+                poses = self.pose_generator.generate_poses(
+                    num_poses,
+                    target_position=self.target_position,
+                    robot_base_z=self.robot_base_z
+                )
 
             logger.info(
                 f"Generated {len(poses)} poses targeting checkerboard at {self.target_position}")
@@ -463,21 +477,22 @@ class SemiAutomatedCalibrator:
             self.calibration_data['t_target2cam'].append(t_target2cam.tolist())
             self.calibration_data['reprojection_errors'].append(
                 reprojection_error)
-            self.calibration_data['joint_angles'].append(current_joints)
+            self.calibration_data['joint_angles'].append(
+                current_joints.tolist())
 
             # Store capture metadata
             metadata = {
                 'pose_number': pose_num,
                 'timestamp': time.time(),
                 'reprojection_error': reprojection_error,
-                'tcp_position': tcp_pose[:3].tolist(),
-                'tcp_orientation': tcp_pose[3:].tolist()
+                'tcp_position': tcp_pose[:3],  # tcp_pose is already a list
+                'tcp_orientation': tcp_pose[3:]  # tcp_pose is already a list
             }
             self.calibration_data['capture_metadata'].append(metadata)
 
             # Save individual capture data
             self._save_capture_data(
-                pose_num, color_frame, depth_frame, current_joints, metadata)
+                pose_num, color_frame, depth_frame, current_joints.tolist(), metadata)
 
             return True
 
@@ -521,14 +536,27 @@ class SemiAutomatedCalibrator:
     def _save_capture_data(self, pose_num: int, color_frame, depth_frame, joint_angles, metadata):
         """Save individual capture data for recovery."""
         try:
-            # Create capture directory
-            capture_dir = Path("calibration_captures") / f"pose_{pose_num:03d}"
+            # Create timestamped session directory if it doesn't exist
+            if not hasattr(self, '_session_dir') or self._session_dir is None:
+                import time
+                base_dir = Path("calibration_captures")
+                self._session_dir = base_dir / time.strftime("%Y%m%d_%H%M%S")
+                self._session_dir.mkdir(parents=True, exist_ok=True)
+                print(f"📁 Saving captures to: {self._session_dir}")
+
+            # Create capture directory within session
+            capture_dir = self._session_dir / f"pose_{pose_num:03d}"
             capture_dir.mkdir(parents=True, exist_ok=True)
 
             # Save images
             cv2.imwrite(str(capture_dir / "color.png"), color_frame)
             if depth_frame is not None:
-                cv2.imwrite(str(capture_dir / "depth.png"), depth_frame)
+                # Convert depth frame to numpy array if it's a RealSense frame
+                if hasattr(depth_frame, 'get_data'):
+                    depth_array = np.asanyarray(depth_frame.get_data())
+                else:
+                    depth_array = depth_frame
+                cv2.imwrite(str(capture_dir / "depth.png"), depth_array)
 
             # Save joint angles
             with open(capture_dir / "joint_angles.json", 'w') as f:

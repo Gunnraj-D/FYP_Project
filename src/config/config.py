@@ -67,7 +67,7 @@ OPC_MOCK_SERVER_URL = "opc.tcp://127.0.0.1:4840/"
 # Robot 2 -> namespace 22, nodes like R2d_Status, R2c_Joi1, etc.
 # Robot 3 -> namespace 23, nodes like R3d_Status, R3c_Joi1, etc.
 # Robot 4 -> namespace 24, nodes like R4d_Status, R4c_Joi1, etc.
-ROBOT_ID = 1  # Default to robot 1, can be changed to 1, 2, 3, or 4
+ROBOT_ID = 3  # Default to robot 1, can be changed to 1, 2, 3, or 4
 
 
 def get_robot_name(robot_id: int = ROBOT_ID) -> str:
@@ -166,8 +166,8 @@ HAND_STABILITY_TIME_THRESHOLD = 2.0  # in seconds
 # OBJECT MANIPULATION CONFIGURATION
 # ============================================================================
 PICKUP_LOCATION = {
-    # Converted from [400, 0, 200] mm to meters
-    'position': np.array([0.4, 0, 0.2]),
+    # Using coordinates from move to state 2 in main_debug
+    'position': np.array([0.39, 0.06, 0.25]),
     'approach_distance': 0.1,  # Converted from 100 mm to meters
     'approach_direction': np.array([0, 0, -1])
 }
@@ -182,8 +182,8 @@ PRE_PICKUP_POSE = [0.4, 0, 0.5, 0, 0, -1.57]
 # Converted from [500, 200, 350, 0, 0, -90] mm/deg
 HANDOFF_APPROACH_POSE = [0.5, 0.2, 0.35, 0, 0, -1.57]
 
-PLACE_APPROACH_DISTANCE = 150  # mm
-PLACE_RELEASE_DISTANCE = 50    # mm
+PLACE_APPROACH_DISTANCE = 0.150  # meters (150mm)
+PLACE_RELEASE_DISTANCE = 0.050   # meters (50mm)
 
 GRIPPER_CONFIG = {
     'open_position': 100,
@@ -201,26 +201,47 @@ GGCNN2_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
 
 # Grasp detection parameters
 GRASP_DETECTION_CONFIG = {
-    'min_quality_threshold': 0.5,      # Minimum grasp quality to accept
-    'max_grasp_width': 100.0,         # Maximum grasp width in mm
-    'min_grasp_width': 20.0,          # Minimum grasp width in mm
-    'approach_height_offset': 50.0,    # Height offset for approach (mm)
-    'grasp_depth_offset': 10.0,        # Depth offset for grasp (mm)
+    # Minimum grasp quality to accept (lowered from 0.5)
+    'min_quality_threshold': 0.15,
+    'max_grasp_width': 0.100,         # Maximum grasp width in meters (100mm)
+    'min_grasp_width': 0.020,         # Minimum grasp width in meters (20mm)
+    # Height offset for approach in meters (50mm)
+    'approach_height_offset': 0.050,
+    'grasp_depth_offset': 0.010,      # Depth offset for grasp in meters (10mm)
     'vertical_approach': True,         # Use vertical approach angle
     # Approach angle in degrees (vertical = -90)
     'approach_angle': -90.0,
     'frame_processing_interval': 0.5,  # Process frames every N seconds
+    # Angle offset to align gripper finger axis with grasp angle (radians)
+    # Common values:
+    #   0.0    - No offset (default, test first)
+    #   π/2    - 90° offset if gripper fingers are perpendicular to expected
+    #   π      - 180° offset if grasps are mirrored
+    #  -angle  - Negate if sign convention is opposite
+    # This must be calibrated empirically by observing actual grasp attempts
+    'grasp_angle_offset_rad': 0.0,
+    # Rotation composition order for grasp orientation
+    # 'down_then_z': R_down @ R_z = align with object, then point down (default)
+    # 'z_then_down': R_z @ R_down = point down, then rotate in local frame
+    'compose_order': 'down_then_z',
+    # Depth sampling radius (pixels) for consistent depth queries
+    # Used in postprocess candidate scoring and 3D pose conversion
+    'depth_sample_radius': 5,
 }
 
 # Grasp execution parameters
 GRASP_EXECUTION_CONFIG = {
-    'pre_grasp_delay': 1.0,           # Delay before grasping (seconds)
+    'pre_grasp_delay': 1.0,            # Delay before grasping (seconds)
     'grasp_duration': 2.0,             # Time to hold grasp (seconds)
-    'post_grasp_delay': 1.0,          # Delay after grasping (seconds)
-    'lift_height': 100.0,              # Height to lift after grasp (mm)
+    'post_grasp_delay': 1.0,           # Delay after grasping (seconds)
+    # Height to lift after grasp in meters (100mm)
+    'lift_height': 0.100,
     'retry_attempts': 3,               # Number of retry attempts
     'retry_delay': 2.0,                # Delay between retries (seconds)
     'grasp_generation_timeout': 10.0,  # Timeout for grasp generation (seconds)
+    'gripper_min_width_m': 0.020,      # Minimum gripper width in meters (20mm)
+    # Maximum gripper width in meters (120mm)
+    'gripper_max_width_m': 0.120,
 }
 
 # ============================================================================
@@ -293,19 +314,88 @@ ERROR_RECOVERY_CONFIG = {
 # HAND-EYE CALIBRATION MATRIX
 # ============================================================================
 
+# Camera transform mode: 'calibrated' or 'simple'
+# - 'calibrated': Use full calibrated hand-eye matrix with rotation and translation
+# - 'simple': Camera on TCP with 180° X rotation (pointing down), no translation offset
+# NOTE: Calibrated mode currently has ~278mm lateral offset error. Use simple mode until recalibrated.
+# Using simple mode by default (calibrated has offset issues)
+CAMERA_TRANSFORM_MODE = 'simple'
+
 # Hand-eye transformation matrix (Camera to TCP)
-# Generated from 13 best calibration poses (pruned from 18 total poses)
-# Translation: 0.285m (reasonable ~28cm camera-to-TCP distance)
-# Mean calibration error: 0.652 (5x improvement over all poses)
-HAND_EYE_MATRIX = np.array([
-    [-0.9988,  0.0473,  0.0120,  0.0237],
-    [-0.0485, -0.9369, -0.3462, -0.0700],
-    [-0.0051, -0.3464,  0.9381,  0.2749],
+# Generated from 13 best calibration poses using Park method (pruned from 18 total poses)
+# Translation: 0.280m (reasonable ~28cm camera-to-TCP distance)
+# Mean calibration error: 0.647 (5x improvement over all poses)
+HAND_EYE_MATRIX_CALIBRATED = np.array([
+    [-0.9996,  0.0258,  0.0120,  0.0009],
+    [-0.0284, -0.9361, -0.3507, -0.0683],
+    [0.0022, -0.3509,  0.9364,  0.2714],
     [0.0000,  0.0000,  0.0000,  1.0000]
 ], dtype=np.float32)
 
+# Simplified hand-eye matrix (camera mounted on TCP, pointing down)
+# Camera frame when pointing down:
+#   X: Right (same as TCP X)
+#   Y: Down in image = Away from TCP (flip to get TCP Y)
+#   Z: Forward/Depth = Down (same as TCP Z when pointing down)
+# Therefore: Flip Y only, keep X and Z aligned
+HAND_EYE_MATRIX_SIMPLE = np.array([
+    [1.0,   0.0,   0.0,  0.0],    # X-axis unchanged (right)
+    [0.0,  -1.0,   0.0,  0.0],    # Y-axis flipped (camera Y+ = TCP Y-)
+    [0.0,   0.0,   1.0,  0.0],    # Z-axis unchanged (camera depth = TCP down)
+    [0.0,   0.0,   0.0,  1.0]
+], dtype=np.float32)
+
+# Select the active hand-eye matrix based on mode
+HAND_EYE_MATRIX = HAND_EYE_MATRIX_CALIBRATED if CAMERA_TRANSFORM_MODE == 'calibrated' else HAND_EYE_MATRIX_SIMPLE
+
 # Hand-eye matrix file path (for loading from disk)
 HAND_EYE_MATRIX_FILE = "src/hand_eye_matrix.npy"
+
+
+def set_camera_transform_mode(mode: str):
+    """
+    Change the camera transform mode at runtime.
+
+    Args:
+        mode: 'calibrated' or 'simple'
+    """
+    global CAMERA_TRANSFORM_MODE, HAND_EYE_MATRIX
+    if mode not in ['calibrated', 'simple']:
+        raise ValueError(
+            f"Invalid mode: {mode}. Must be 'calibrated' or 'simple'")
+    CAMERA_TRANSFORM_MODE = mode
+    HAND_EYE_MATRIX = HAND_EYE_MATRIX_CALIBRATED if mode == 'calibrated' else HAND_EYE_MATRIX_SIMPLE
+    print(f"✅ Camera transform mode set to: {mode}")
+
+
+def get_camera_transform_info() -> dict:
+    """
+    Get information about the current camera transform configuration.
+
+    Returns:
+        Dictionary with mode, matrix, and translation info
+    """
+    return {
+        'mode': CAMERA_TRANSFORM_MODE,
+        'matrix': HAND_EYE_MATRIX,
+        'translation': HAND_EYE_MATRIX[:3, 3],
+        'has_rotation': not np.allclose(HAND_EYE_MATRIX[:3, :3], np.eye(3))
+    }
+
+
+def print_camera_transform_info():
+    """Print current camera transform configuration."""
+    info = get_camera_transform_info()
+    print("\n" + "="*50)
+    print("📷 CAMERA TRANSFORM CONFIGURATION")
+    print("="*50)
+    print(f"Mode: {info['mode'].upper()}")
+    print(
+        f"Has Rotation: {'Yes' if info['has_rotation'] else 'No (Identity)'}")
+    print(f"Translation [x, y, z]: {info['translation']}")
+    print(f"Translation Magnitude: {np.linalg.norm(info['translation']):.4f}m")
+    print("="*50 + "\n")
+
 
 # ============================================================================
 # LOGGING CONFIGURATION

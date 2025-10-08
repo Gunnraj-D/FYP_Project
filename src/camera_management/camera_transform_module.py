@@ -6,9 +6,13 @@ import numpy as np
 from typing import List, Tuple
 import logging
 
-from config.config import CAMERA_TRANSLATION, CAMERA_ROTATION_EULER, HAND_EYE_MATRIX
+from config.config import CAMERA_TRANSLATION, CAMERA_ROTATION_EULER
+import config.config as config_module
 
 logger = logging.getLogger(__name__)
+
+# Log the active camera transform mode on module load
+logger.info(f"Camera Transform Mode: {config_module.CAMERA_TRANSFORM_MODE}")
 
 
 def transform_camera_to_base(camera_position: List[float], tcp_matrix: np.ndarray) -> np.ndarray:
@@ -26,58 +30,28 @@ def transform_camera_to_base(camera_position: List[float], tcp_matrix: np.ndarra
         # Convert camera position to numpy array
         camera_pos = np.array(camera_position, dtype=float)
 
-        # Use calibrated hand-eye matrix for camera-to-TCP transformation
-        camera_to_tcp = HAND_EYE_MATRIX
+        # Use hand-eye matrix for camera-to-TCP transformation (dynamically read from config)
+        camera_to_tcp = config_module.HAND_EYE_MATRIX
 
         # Transform camera position to TCP frame
         camera_pos_homogeneous = np.append(camera_pos, 1.0)
         tcp_pos_homogeneous = camera_to_tcp @ camera_pos_homogeneous
         tcp_pos = tcp_pos_homogeneous[:3]
 
+        logger.info(
+            f"Camera->TCP transformation ({config_module.CAMERA_TRANSFORM_MODE}): {camera_pos} -> {tcp_pos}")
+
         # Transform TCP position to base frame
         base_pos_homogeneous = tcp_matrix @ np.append(tcp_pos, 1.0)
         base_pos = base_pos_homogeneous[:3]
 
+        logger.info(f"TCP->Base transformation: {tcp_pos} -> {base_pos}")
         logger.debug(
             f"Camera position {camera_pos} -> Base position {base_pos}")
         return base_pos
 
     except Exception as e:
         logger.error(f"Failed to transform camera to base: {e}")
-        return np.array([0.0, 0.0, 0.0])
-
-
-def transform_camera_to_tcp_frame(camera_position: List[float]) -> np.ndarray:
-    """
-    Transform position from camera frame directly to TCP frame using calibrated hand-eye matrix.
-
-    This function is used by the hand tracking system to convert camera coordinates
-    to TCP-relative coordinates for robot movement control.
-
-    Args:
-        camera_position: [x, y, z] position in camera frame (meters)
-
-    Returns:
-        Position in TCP frame (meters)
-    """
-    try:
-        # Convert camera position to numpy array
-        camera_pos = np.array(camera_position, dtype=float)
-
-        # Use calibrated hand-eye matrix for camera-to-TCP transformation
-        camera_to_tcp = HAND_EYE_MATRIX
-
-        # Transform camera position to TCP frame
-        camera_pos_homogeneous = np.append(camera_pos, 1.0)
-        tcp_pos_homogeneous = camera_to_tcp @ camera_pos_homogeneous
-        tcp_pos = tcp_pos_homogeneous[:3]
-
-        logger.debug(
-            f"Camera position {camera_pos} -> TCP position {tcp_pos}")
-        return tcp_pos
-
-    except Exception as e:
-        logger.error(f"Failed to transform camera to TCP frame: {e}")
         return np.array([0.0, 0.0, 0.0])
 
 
@@ -101,8 +75,8 @@ def transform_base_to_camera(base_position: List[float], tcp_matrix: np.ndarray)
         tcp_pos_homogeneous = np.linalg.inv(tcp_matrix) @ base_pos_homogeneous
         tcp_pos = tcp_pos_homogeneous[:3]
 
-        # Use calibrated hand-eye matrix for TCP-to-camera transformation (inverse)
-        tcp_to_camera = np.linalg.inv(HAND_EYE_MATRIX)
+        # Use hand-eye matrix for TCP-to-camera transformation (inverse, dynamically read from config)
+        tcp_to_camera = np.linalg.inv(config_module.HAND_EYE_MATRIX)
 
         # Transform TCP position to camera frame
         tcp_pos_homogeneous = np.append(tcp_pos, 1.0)

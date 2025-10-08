@@ -3,7 +3,15 @@ Debug version of the main integrated robot control system.
 Allows interactive selection and execution of individual states and task sequencers.
 """
 import warnings
-from config.config import PRE_PICKUP_POSE, HANDOFF_APPROACH_POSE, ROBOT_ID
+from config.config import (
+    PRE_PICKUP_POSE,
+    HANDOFF_APPROACH_POSE,
+    ROBOT_ID,
+    PICKUP_LOCATION,
+    set_camera_transform_mode,
+    print_camera_transform_info,
+    CAMERA_TRANSFORM_MODE
+)
 from states.placement_task_sequencer import PlacementTaskSequencer, create_placement_sequencer
 from states.pickup_task_sequencer import PickupTaskSequencer, create_pickup_sequencer
 from states.grasping_state import GraspingState
@@ -278,9 +286,9 @@ class DebugSystemManager:
         """Get dictionary of available states for execution."""
         states = {
             # Reasonable position in workspace
-            1: MoveToState(self.context, target_location=(0.3, 0.415, 0.24)),
+            1: MoveToState(self.context, target_location=(0.3, 0.415, 0.6)),
             # Updated second position
-            2: MoveToState(self.context, target_location=(0.39, 0.06, 0.1)),
+            2: MoveToState(self.context, target_location=tuple(PICKUP_LOCATION['position'])),
             3: GripperControlState(self.context, action='open'),
             4: GripperControlState(self.context, action='close'),
             5: UnifiedHandTrackingState(self.context),
@@ -433,11 +441,14 @@ class DebugSystemManager:
         print(f"OPC Mode: {self.opc_mode or 'default from config'}")
         if self.opc_mode == "mock" and self.mock_server:
             print("✅ Mock OPC UA server running")
+        print(f"Camera Transform Mode: {CAMERA_TRANSFORM_MODE}")
         print("\nAvailable commands:")
         print("  states - Show available states")
         print("  sequencers - Show available sequencers")
         print("  run <number> - Execute state by number")
         print("  seq <number> - Execute sequencer by number")
+        print("  camera - Toggle camera transform mode (calibrated/simple)")
+        print("  camera info - Show camera transform details")
         print("  force - Force completion of current execution")
         print("  status - Show system status")
         print("  quit - Exit program")
@@ -465,6 +476,10 @@ class DebugSystemManager:
                     self._execute_state_by_number(command)
                 elif command.startswith("seq "):
                     self._execute_sequencer_by_number(command)
+                elif command == "camera":
+                    self._toggle_camera_mode()
+                elif command == "camera info":
+                    print_camera_transform_info()
                 elif command == "force":
                     self.force_complete_execution()
                 elif command == "status":
@@ -481,6 +496,22 @@ class DebugSystemManager:
 
         print("👋 Exiting debug mode")
 
+    def _toggle_camera_mode(self):
+        """Toggle between calibrated and simple camera transform modes."""
+        from config.config import CAMERA_TRANSFORM_MODE as current_mode
+        new_mode = 'simple' if current_mode == 'calibrated' else 'calibrated'
+
+        print(
+            f"\n🔄 Switching camera transform mode: {current_mode} -> {new_mode}")
+
+        try:
+            set_camera_transform_mode(new_mode)
+            print("⚠️ Note: This will affect all future transformations.")
+            print("   Already running states will not be affected until restarted.")
+            print_camera_transform_info()
+        except Exception as e:
+            print(f"❌ Failed to switch camera mode: {e}")
+
     def _show_help(self):
         """Show help information."""
         print("\n" + "="*50)
@@ -491,6 +522,8 @@ class DebugSystemManager:
         print("  sequencers - Show available sequencers")
         print("  run <number> - Execute state by number")
         print("  seq <number> - Execute sequencer by number")
+        print("  camera - Toggle camera transform mode (calibrated/simple)")
+        print("  camera info - Show camera transform details")
         print("  force - Force completion of current execution")
         print("  status - Show system status")
         print("  help - Show this help")
@@ -524,10 +557,10 @@ class DebugSystemManager:
             # Create fresh state instance based on state number
             if state_num == 1:
                 state = MoveToState(
-                    self.context, target_location=(0.3, 0.415, 0.24))
+                    self.context, target_location=(0.3, 0.415, 0.4))
             elif state_num == 2:
                 state = MoveToState(
-                    self.context, target_location=(0.39, 0.06, 0.1))
+                    self.context, target_location=tuple(PICKUP_LOCATION['position']))
             elif state_num == 3:
                 state = GripperControlState(self.context, action='open')
             elif state_num == 4:

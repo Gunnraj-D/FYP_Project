@@ -23,7 +23,7 @@ class CalibrationConfig:
     # Checkerboard parameters
     # Internal corners (width, height)
     chessboard_size: Tuple[int, int] = (9, 6)
-    square_size: float = 0.08  # Size of each square in meters (8 cm)
+    square_size: float = 0.008  # Size of each square in meters (8 mm)
 
     # Calibration parameters
     num_poses: int = 15  # Number of poses to collect

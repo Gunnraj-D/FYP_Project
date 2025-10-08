@@ -64,6 +64,11 @@ class HandTracker:
         # Processing thread
         self.processing_thread: Optional[threading.Thread] = None
 
+        # Filtering state - keep last 5 frames for outlier detection
+        self.position_history = []
+        self.max_history_size = 5
+        self.filtering_threshold = 0.20  # 20cm threshold
+
     def _setup_detector(self):
         """Setup MediaPipe hand detector."""
         try:
@@ -112,6 +117,53 @@ class HandTracker:
         except Exception as e:
             logger.error(f"Palm calculation error: {e}")
             return None, None
+
+    def _filter_hand_position(self, position):
+        """
+        Filter hand position to reject outliers.
+
+        Args:
+            position: [x, y, z] position in TCP frame
+
+        Returns:
+            Filtered position or None if rejected
+        """
+        # Always allow zero position (hand leaving frame)
+        if position is None or np.array_equal(position, [0.0, 0.0, 0.0]):
+            self.position_history = []  # Clear history when hand leaves
+            return position
+
+        position = np.array(position)
+
+        # If we don't have enough history, accept the position
+        if len(self.position_history) < 2:
+            self.position_history.append(position.copy())
+            if len(self.position_history) > self.max_history_size:
+                self.position_history.pop(0)
+            return position
+
+        # Calculate average of recent positions
+        recent_positions = np.array(self.position_history)
+        avg_position = np.mean(recent_positions, axis=0)
+
+        # Calculate distance from average
+        distance_from_avg = np.linalg.norm(position - avg_position)
+
+        # Accept if within threshold
+        if distance_from_avg <= self.filtering_threshold:
+            self.position_history.append(position.copy())
+            if len(self.position_history) > self.max_history_size:
+                self.position_history.pop(0)
+            return position
+        else:
+            # Reject outlier - use last valid position instead
+            logger.debug(
+                f"Rejected outlier position: distance {distance_from_avg*1000:.1f}mm from average")
+            if self.position_history:
+                # Return last valid position
+                return self.position_history[-1].copy()
+            else:
+                return position  # Fallback to current position
 
     def _draw_results(self, frame, landmarks, palm_pos, depth, vector_3d_cam):
         """Draw all visualization elements."""
@@ -250,9 +302,14 @@ class HandTracker:
                                 from camera_management.camera_transform_module import transform_camera_to_tcp_frame
                                 vector_3d_tcp = transform_camera_to_tcp_frame(
                                     vector_3d_cam)
-                                # Store TCP-relative coordinates as the primary camera vector
-                                self.telemetry.update_camera_vector(
+
+                                # Apply filtering to reject outliers
+                                filtered_tcp = self._filter_hand_position(
                                     vector_3d_tcp)
+
+                                # Store filtered TCP-relative coordinates as the primary camera vector
+                                self.telemetry.update_camera_vector(
+                                    filtered_tcp)
                             except Exception as e:
                                 logger.debug(
                                     f"Failed to calculate TCP-relative coordinates: {e}")
@@ -266,7 +323,9 @@ class HandTracker:
                             self.telemetry.update_radius(actual_radius)
                             palm_pos = (palm_x, palm_y, pixel_radius)
                 else:
-                    self.telemetry.update_camera_vector(vector_3d_cam)
+                    # No hand detected - apply filtering to zero vector
+                    filtered_zero = self._filter_hand_position(vector_3d_cam)
+                    self.telemetry.update_camera_vector(filtered_zero)
 
                 # Create display frame
                 display_frame = cv2.flip(color_frame, 1)

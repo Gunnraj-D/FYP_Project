@@ -92,6 +92,10 @@ class OPCClient:
         self._last_gripper_status: Optional[str] = None
         self._reconnect_attempts = 0
 
+        # Loop timing history for warning management
+        self.loop_timings: List[float] = []
+        self.max_timing_history = 25
+
         # Thread safety
         self._lock = threading.RLock()
 
@@ -305,11 +309,22 @@ class OPCClient:
             # Maintain loop timing
             elapsed = time.time() - loop_start
             sleep_time = max(0, loop_interval - elapsed)
+
+            # Track loop timing for warning management
+            self.loop_timings.append(elapsed)
+            if len(self.loop_timings) > self.max_timing_history:
+                self.loop_timings.pop(0)
+
+            # Only warn if average of last 25 loops exceeds threshold
+            if len(self.loop_timings) >= self.max_timing_history:
+                avg_elapsed = sum(self.loop_timings) / len(self.loop_timings)
+                if avg_elapsed > loop_interval * 1.1:  # Warn if average significantly over
+                    logger.warning(
+                        f"OPC loop average exceeded target interval by {avg_elapsed - loop_interval:.3f}s "
+                        f"(avg of last {len(self.loop_timings)} loops)")
+
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
-            elif elapsed > loop_interval * 1.1:  # Warn if significantly over
-                logger.warning(
-                    f"OPC loop exceeded target interval by {elapsed - loop_interval:.3f}s")
 
     async def _update_telemetry(self):
         """Read robot state and update telemetry store using batch operations."""

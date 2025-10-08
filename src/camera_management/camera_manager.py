@@ -30,7 +30,10 @@ class CameraManager:
         self.config = config or CameraConfig()
         self.pipeline: Optional[rs.pipeline] = None
         self.align: Optional[rs.align] = None
+        # Color intrinsics (kept for backward compatibility)
         self.intrinsics: Optional[rs.intrinsics] = None
+        self.color_intrinsics: Optional[rs.intrinsics] = None
+        self.depth_intrinsics: Optional[rs.intrinsics] = None
         self.is_initialized = False
 
     def initialize(self) -> bool:
@@ -62,13 +65,23 @@ class CameraManager:
 
             # Get intrinsics for coordinate transformation
             color_stream = profile.get_stream(rs.stream.color)
-            self.intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
+            depth_stream = profile.get_stream(rs.stream.depth)
+
+            self.color_intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
+            self.depth_intrinsics = depth_stream.as_video_stream_profile().get_intrinsics()
+
+            # Keep self.intrinsics for backward compatibility (defaults to color)
+            self.intrinsics = self.color_intrinsics
 
             # Create align object for depth-to-color alignment
             self.align = rs.align(rs.stream.color)
 
             self.is_initialized = True
             logger.info("Camera initialized successfully")
+            logger.info(
+                f"Color intrinsics: {self.color_intrinsics.width}x{self.color_intrinsics.height}, fx={self.color_intrinsics.fx:.1f}, fy={self.color_intrinsics.fy:.1f}")
+            logger.info(
+                f"Depth intrinsics: {self.depth_intrinsics.width}x{self.depth_intrinsics.height}, fx={self.depth_intrinsics.fx:.1f}, fy={self.depth_intrinsics.fy:.1f}")
             return True
 
         except Exception as e:
@@ -151,6 +164,8 @@ class CameraManager:
         self.pipeline = None
         self.align = None
         self.intrinsics = None
+        self.color_intrinsics = None
+        self.depth_intrinsics = None
         self.is_initialized = False
         logger.info("Camera cleanup complete")
 
