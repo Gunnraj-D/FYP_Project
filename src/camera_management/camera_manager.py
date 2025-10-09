@@ -47,6 +47,9 @@ class CameraManager:
         self._depth_cache_scale: Optional[float] = None
         self._depth_cache_dims: Optional[Tuple[int, int]] = None
 
+        # Depth scale (units per meter) - cached from sensor
+        self._depth_scale: Optional[float] = None
+
     def initialize(self) -> bool:
         """Initialize the RealSense camera."""
         try:
@@ -81,19 +84,37 @@ class CameraManager:
             self.color_intrinsics = color_stream.as_video_stream_profile().get_intrinsics()
             self.depth_intrinsics = depth_stream.as_video_stream_profile().get_intrinsics()
 
+            # Validate that returned profiles match requested configuration
+            if self.color_intrinsics.width != self.config.color_width or \
+               self.color_intrinsics.height != self.config.color_height:
+                logger.warning(
+                    f"Color profile mismatch: requested {self.config.color_width}x{self.config.color_height}, "
+                    f"got {self.color_intrinsics.width}x{self.color_intrinsics.height}")
+
+            if self.depth_intrinsics.width != self.config.depth_width or \
+               self.depth_intrinsics.height != self.config.depth_height:
+                logger.warning(
+                    f"Depth profile mismatch: requested {self.config.depth_width}x{self.config.depth_height}, "
+                    f"got {self.depth_intrinsics.width}x{self.depth_intrinsics.height}")
+
             # After depth-to-color alignment, aligned depth has same intrinsics as color
             self.aligned_color_intrinsics = self.color_intrinsics
 
             # Create align object for depth-to-color alignment
             self.align = rs.align(rs.stream.color)
 
+            # Cache depth scale from sensor
+            depth_sensor = profile.get_device().first_depth_sensor()
+            self._depth_scale = depth_sensor.get_depth_scale()
+            logger.info(f"Depth scale: {self._depth_scale} (meters per unit)")
+
             self.is_initialized = True
             logger.info("Camera initialized successfully")
             logger.info(
-                f"Color intrinsics: {self.color_intrinsics.width}x{self.color_intrinsics.height}, "
+                f"Color stream: {self.color_intrinsics.width}x{self.color_intrinsics.height} @ {self.config.color_fps}fps, "
                 f"fx={self.color_intrinsics.fx:.1f}, fy={self.color_intrinsics.fy:.1f}")
             logger.info(
-                f"Depth intrinsics: {self.depth_intrinsics.width}x{self.depth_intrinsics.height}, "
+                f"Depth stream: {self.depth_intrinsics.width}x{self.depth_intrinsics.height} @ {self.config.depth_fps}fps, "
                 f"fx={self.depth_intrinsics.fx:.1f}, fy={self.depth_intrinsics.fy:.1f}")
             logger.info(
                 f"Aligned depth uses color intrinsics for deprojection")
@@ -147,6 +168,14 @@ class CameraManager:
         - Depth must be in METERS (e.g., from get_average_depth())
         - Uses aligned_color_intrinsics which is correct for aligned depth
 
+        DISTORTION HANDLING:
+        - Uses RealSense SDK rs2_deproject_pixel_to_point() which handles lens
+          distortion automatically using the Brown-Conrady model if distortion
+          coefficients are present in the intrinsics
+        - For RealSense color streams, distortion is typically minimal but is
+          properly handled by the SDK function
+        - This is more robust than manual pinhole projection formulas
+
         Args:
             x: Pixel x-coordinate in color frame
             y: Pixel y-coordinate in color frame
@@ -175,18 +204,59 @@ class CameraManager:
             logger.error(f"3D conversion error: {e}")
             return (0.0, 0.0, 0.0)
 
+    def get_depth_scale(self) -> float:
+        """
+        Get depth scale (meters per unit) from the sensor.
+
+        Returns:
+            Depth scale factor (typically 0.001 for mm to m conversion), or 0.001 if not available
+        """
+        if self._depth_scale is not None:
+            return self._depth_scale
+        logger.warning("Depth scale not available, using default 0.001")
+        return 0.001
+
+    def get_depth_image_meters(self, depth_frame: rs.depth_frame) -> Optional[np.ndarray]:
+        """
+        Convert depth frame to float32 numpy array in meters.
+
+        This is a convenience method that handles the conversion from raw depth units
+        to meters in one step, reducing repeated scaling and unit mistakes.
+
+        Args:
+            depth_frame: RealSense depth frame (aligned to color)
+
+        Returns:
+            Depth image as float32 array in meters, or None if conversion fails
+        """
+        try:
+            depth_array_raw = np.asanyarray(depth_frame.get_data())
+            depth_scale = depth_frame.get_units()
+            depth_array_meters = depth_array_raw.astype(
+                np.float32) * depth_scale
+            return depth_array_meters
+        except Exception as e:
+            logger.error(f"Failed to convert depth frame to meters: {e}")
+            return None
+
     def get_average_depth(self, depth_frame: rs.depth_frame,
                           center: Tuple[int, int], radius: int,
                           min_valid_pixels: int = 5) -> float:
         """
         Get median depth in circular region with robust outlier rejection.
 
+        ALIGNMENT REQUIREMENT:
+            - depth_frame MUST be aligned to color (from get_frames())
+            - center coordinates MUST be in COLOR frame pixel coordinates
+            - The circular mask is drawn in depth frame coordinates, which after
+              alignment match the color frame coordinates 1:1
+
         Uses caching to avoid repeated get_data() calls for the same frame,
         significantly improving performance when called multiple times per frame.
 
         Args:
-            depth_frame: RealSense depth frame (aligned to color)
-            center: (x, y) center pixel coordinates
+            depth_frame: RealSense depth frame (MUST be aligned to color via rs.align)
+            center: (x, y) center pixel coordinates in COLOR frame
             radius: Radius in pixels for circular sampling region
             min_valid_pixels: Minimum number of valid depth pixels required (default: 5)
 
