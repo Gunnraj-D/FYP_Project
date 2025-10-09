@@ -321,7 +321,11 @@ ERROR_RECOVERY_CONFIG = {
 # Using simple mode by default (calibrated has offset issues)
 CAMERA_TRANSFORM_MODE = 'simple'
 
-# Hand-eye transformation matrix (Camera to TCP)
+# Hand-eye transformation matrix: tcp_T_camera (Camera frame → TCP frame)
+# CONVENTION: HAND_EYE_MATRIX = tcp_T_camera
+#   Forward:  tcp_pos = HAND_EYE_MATRIX @ camera_pos_homogeneous
+#   Inverse:  camera_pos = inv(HAND_EYE_MATRIX) @ tcp_pos_homogeneous
+#
 # Generated from 13 best calibration poses using Park method (pruned from 18 total poses)
 # Translation: 0.280m (reasonable ~28cm camera-to-TCP distance)
 # Mean calibration error: 0.647 (5x improvement over all poses)
@@ -330,9 +334,10 @@ HAND_EYE_MATRIX_CALIBRATED = np.array([
     [-0.0284, -0.9361, -0.3507, -0.0683],
     [0.0022, -0.3509,  0.9364,  0.2714],
     [0.0000,  0.0000,  0.0000,  1.0000]
-], dtype=np.float32)
+], dtype=np.float64)  # Use float64 for numerical precision
 
-# Simplified hand-eye matrix (camera mounted on TCP, pointing down)
+# Simplified hand-eye matrix: tcp_T_camera (camera mounted on TCP, pointing down)
+# CONVENTION: Same as above - tcp_T_camera
 # Camera frame when pointing down:
 #   X: Right (same as TCP X)
 #   Y: Down in image = Away from TCP (flip to get TCP Y)
@@ -343,7 +348,7 @@ HAND_EYE_MATRIX_SIMPLE = np.array([
     [0.0,  -1.0,   0.0,  0.0],    # Y-axis flipped (camera Y+ = TCP Y-)
     [0.0,   0.0,   1.0,  0.0],    # Z-axis unchanged (camera depth = TCP down)
     [0.0,   0.0,   0.0,  1.0]
-], dtype=np.float32)
+], dtype=np.float64)  # Use float64 for numerical precision
 
 # Select the active hand-eye matrix based on mode
 HAND_EYE_MATRIX = HAND_EYE_MATRIX_CALIBRATED if CAMERA_TRANSFORM_MODE == 'calibrated' else HAND_EYE_MATRIX_SIMPLE

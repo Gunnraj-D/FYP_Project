@@ -36,6 +36,10 @@ def get_facing_down_orientation() -> np.ndarray:
     """
     Returns the 3x3 rotation matrix for a tool facing straight down.
     This corresponds to a 180-degree rotation around the world's X-axis.
+    
+    This matrix flips the Y and Z axes, making the tool point downward (-Z direction)
+    while keeping the X-axis unchanged. This is the standard orientation for
+    top-down grasping tasks.
     """
     # A 180-degree rotation around the X-axis
     return np.array([
