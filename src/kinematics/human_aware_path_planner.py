@@ -26,6 +26,7 @@ from scipy.spatial.transform import Rotation as R
 try:
     from pybullet_planning import link_pairs_collision, get_joint_positions, set_joint_positions
     from pybullet_planning import plan_joint_motion, get_movable_joints
+    from pybullet_planning import get_collision_fn, set_client
     PYBULLET_PLANNING_AVAILABLE = True
 except ImportError:
     logger.warning("pybullet_planning not available - using fallback planner")
@@ -97,6 +98,8 @@ class HumanModelAdapter:
         from config.config import TRACKED_HUMAN_JOINTS
 
         positions = {}
+        found_joints = []
+        missing_joints = []
 
         for category, joint_names in TRACKED_HUMAN_JOINTS.items():
             for joint_name in joint_names:
@@ -104,6 +107,14 @@ class HumanModelAdapter:
                 if pos is not None:
                     positions[joint_name] = np.array(pos)
                     self.valid_joints.add(joint_name)
+                    found_joints.append(joint_name)
+                else:
+                    missing_joints.append(joint_name)
+
+        logger.info(f"Found {len(found_joints)} joints: {found_joints}")
+        if missing_joints:
+            logger.warning(
+                f"Missing {len(missing_joints)} joints: {missing_joints}")
 
         return positions
 
@@ -118,6 +129,8 @@ class HumanModelAdapter:
                     position=positions[joint_name],
                     radius=radius
                 )
+                logger.info(
+                    f"Created/updated head sphere '{joint_name}' at {positions[joint_name]} r={radius}")
 
     def _update_torso_capsule(self, positions: Dict[str, np.ndarray]):
         """Create/update capsule between CHEST_SPINE and PELVIS."""
@@ -131,6 +144,11 @@ class HumanModelAdapter:
                 pos_b=positions['PELVIS'],
                 radius=self.config['torso_radius']
             )
+            logger.info(
+                f"Created/updated torso capsule {chest_joint}↔PELVIS r={self.config['torso_radius']}")
+        else:
+            logger.warning(
+                f"Cannot create torso: chest_joint '{chest_joint}' in positions: {chest_joint in positions}, PELVIS in positions: {'PELVIS' in positions}")
 
     def _update_arm_capsules(self, positions: Dict[str, np.ndarray], side: str):
         """Create/update capsules for arm segments (upper arm, forearm)."""
@@ -304,12 +322,34 @@ class HumanAwarePathPlanner:
         self.client = p.connect(p.DIRECT)
         logger.info("Created PyBullet planning world (DIRECT mode)")
 
+        # CRITICAL: Bind pybullet_planning to our PyBullet client!
+        # This ensures the library uses the same physics server as our robot/obstacles
+        if PYBULLET_PLANNING_AVAILABLE:
+            set_client(self.client)
+            logger.info(f"Bound pybullet_planning to client {self.client}")
+
         # Load robot
         self.robot_id = p.loadURDF(
             urdf_path,
             useFixedBase=True,
             physicsClientId=self.client
         )
+
+        # Get movable joint information
+        self.num_joints = p.getNumJoints(
+            self.robot_id, physicsClientId=self.client)
+        self.movable_joints = []
+        for j in range(self.num_joints):
+            info = p.getJointInfo(
+                self.robot_id, j, physicsClientId=self.client)
+            joint_type = info[2]
+            if joint_type == p.JOINT_REVOLUTE or joint_type == p.JOINT_PRISMATIC:
+                self.movable_joints.append(j)
+
+        # We'll use first 7 revolute joints for planning
+        self.planning_joints = self.movable_joints[:7]
+        logger.info(
+            f"Planning with {len(self.planning_joints)} joints: {self.planning_joints}")
 
         # TODO: Load table/environment obstacles
 
@@ -338,7 +378,10 @@ class HumanAwarePathPlanner:
         """
         start_time = time.time()
 
+        logger.info(f"Planning trajectory from start to pose {goal_pose[:3]}")
+
         # 1. Update human collision model
+        logger.info("Updating human collision model from ZED data...")
         self._update_human_model()
 
         # 2. Sample goal configurations via IK
@@ -352,14 +395,17 @@ class HumanAwarePathPlanner:
             }
 
         # 3. Run RRT-Connect planner
-        # TODO: Implement actual RRT-Connect planning
-        # For now, return a simple interpolated trajectory as placeholder
-        trajectory = self._placeholder_plan(start_joints, goal_joints[0])
+        if PYBULLET_PLANNING_AVAILABLE:
+            trajectory = self._rrt_connect_plan(start_joints, goal_joints[0])
+        else:
+            logger.warning(
+                "Using fallback linear planner (pybullet_planning not installed)")
+            trajectory = self._placeholder_plan(start_joints, goal_joints[0])
 
         if trajectory is None:
             return None, {
                 'success': False,
-                'reason': 'Planning failed',
+                'reason': 'Planning failed - no collision-free path found',
                 'person_detected': self.person_detected,
                 'planning_time': time.time() - start_time
             }
@@ -372,7 +418,8 @@ class HumanAwarePathPlanner:
             'planning_time': time.time() - start_time,
             'waypoint_count': len(trajectory),
             'min_clearance': min_clearance,
-            'person_detected': self.person_detected
+            'person_detected': self.person_detected,
+            'planner_used': 'rrt_connect' if PYBULLET_PLANNING_AVAILABLE else 'linear_fallback'
         }
 
         return trajectory, metadata
@@ -432,13 +479,29 @@ class HumanAwarePathPlanner:
                 self.human_model.clear()
             self.person_detected = False
             self.last_skeleton_data = None
+            logger.info("No person detected in ZED data")
             return
 
         # Update with first (and only) skeleton
         skeleton = frame_data.skeletons[0]
+        logger.info(
+            f"Updating human model from skeleton ID {skeleton.skeleton_id}")
         self.human_model.update_from_skeleton(skeleton)
         self.person_detected = True
         self.last_skeleton_data = skeleton
+
+        # Log how many collision bodies were created
+        num_bodies = len(self.human_model.get_all_body_ids())
+        logger.info(
+            f"Human model updated: {num_bodies} collision bodies created")
+
+        # Log sample positions for debugging
+        sample_joints = ['PELVIS', 'NECK', 'RIGHT_WRIST']
+        logger.info("Sample human joint positions:")
+        for joint_name in sample_joints:
+            pos = skeleton.get_joint_position(joint_name)
+            if pos:
+                logger.info(f"  {joint_name}: {pos}")
 
     def _sample_goal_configurations(self, goal_pose: List[float]) -> List[List[float]]:
         """Sample multiple goal configurations via IK."""
@@ -460,9 +523,136 @@ class HumanAwarePathPlanner:
 
         return [goal_joints.tolist()] if goal_joints is not None else []
 
+    def _rrt_connect_plan(self, start: List[float], goal: List[float]) -> Optional[List[List[float]]]:
+        """
+        Plan collision-free path using RRT-Connect from pybullet_planning.
+
+        Args:
+            start: Starting joint configuration [7]
+            goal: Goal joint configuration [7]
+
+        Returns:
+            List of joint waypoints or None if no path found
+        """
+        logger.info(f"Running RRT-Connect planner (start → goal)")
+
+        try:
+            # Set robot to start configuration in planning world
+            logger.info(f"Setting robot to start configuration: {start}")
+            for i, joint_idx in enumerate(self.planning_joints):
+                p.resetJointState(
+                    self.robot_id,
+                    joint_idx,
+                    start[i],
+                    physicsClientId=self.client
+                )
+
+            # Get robot TCP and base position for debugging
+            link_state = p.getLinkState(
+                self.robot_id,
+                self.num_joints - 1,  # Last link (TCP)
+                computeForwardKinematics=True,
+                physicsClientId=self.client
+            )
+            robot_tcp = np.array(link_state[4])  # World position
+
+            # Get robot base position
+            base_pos, base_orn = p.getBasePositionAndOrientation(
+                self.robot_id, physicsClientId=self.client
+            )
+            logger.info(f"Robot base position: {base_pos}")
+            logger.info(f"Robot TCP position: {robot_tcp}")
+
+            # Get a sample human body position
+            human_bodies = self.human_model.get_all_body_ids()
+            if human_bodies:
+                sample_body = human_bodies[0]
+                sample_pos, _ = p.getBasePositionAndOrientation(
+                    sample_body, physicsClientId=self.client
+                )
+                logger.info(f"Sample human body position: {sample_pos}")
+
+            # Check if start is collision-free
+            start_clearance, closest_body = self._compute_clearance_at_config_detailed(
+                start)
+            logger.info(
+                f"Start configuration clearance: {start_clearance:.3f}m (closest to: {closest_body})")
+
+            # Log human obstacle info
+            human_bodies = self.human_model.get_all_body_ids()
+            logger.info(
+                f"Planning with {len(human_bodies)} human collision primitives")
+
+            # DIAGNOSTIC: Use pybullet_planning's collision checker to see what it thinks
+            if PYBULLET_PLANNING_AVAILABLE:
+                logger.info(
+                    "Running collision diagnostic on start configuration...")
+                try:
+                    collision_fn = get_collision_fn(
+                        self.robot_id,
+                        self.planning_joints,
+                        obstacles=human_bodies,
+                        self_collisions=False,
+                        disabled_collisions=set()
+                    )
+                    start_in_collision = collision_fn(start, diagnosis=True)
+                    if start_in_collision:
+                        logger.warning(
+                            "pybullet_planning reports start is in collision!")
+                        logger.warning("Collision pairs: " +
+                                       str(start_in_collision))
+                    else:
+                        logger.info(
+                            "pybullet_planning: start is collision-free ✓")
+                except Exception as e:
+                    logger.warning(f"Collision diagnostic failed: {e}")
+
+            hard_min = self.config.get('hard_min_distance', 0.12)
+
+            if start_clearance < 0.02:  # Less than 2cm - true penetration
+                logger.error(
+                    f"Start configuration in collision! (clearance: {start_clearance:.3f}m)")
+                logger.error(
+                    "Robot is penetrating human model. Move robot away first.")
+                return None
+
+            # Now plan with proper obstacles (client binding should fix the collision check)
+            logger.info("Calling plan_joint_motion with human obstacles...")
+            path = plan_joint_motion(
+                self.robot_id,
+                self.planning_joints,
+                goal,
+                obstacles=human_bodies,  # Now using proper obstacles!
+                self_collisions=False,
+                disabled_collisions=set(),
+                max_distance=self.config.get('step_size', 0.1),
+                restarts=5,  # More restarts to handle difficult cases
+                iterations=self.config.get('max_iterations', 5000),
+                smooth=self.config.get('smoothing_iterations', 50),
+                custom_limits={},
+                diagnosis=False,
+                physicsClientId=self.client
+            )
+
+            if path is None:
+                logger.warning("RRT-Connect could not find a path")
+                return None
+
+            logger.info(f"RRT-Connect found path with {len(path)} waypoints")
+
+            # Convert path to list format (path is list of tuples)
+            trajectory = [list(waypoint) for waypoint in path]
+
+            return trajectory
+
+        except Exception as e:
+            logger.error(f"RRT-Connect planning failed: {e}")
+            return None
+
     def _placeholder_plan(self, start: List[float], goal: List[float]) -> Optional[List[List[float]]]:
-        """Placeholder: simple linear interpolation (replace with RRT-Connect)."""
-        # TODO: Replace with actual RRT-Connect implementation
+        """Fallback: simple linear interpolation (used if pybullet_planning not available)."""
+        logger.warning(
+            "Using linear interpolation fallback - no obstacle avoidance!")
         steps = 50
         trajectory = []
 
@@ -476,19 +666,31 @@ class HumanAwarePathPlanner:
 
         return trajectory
 
-    def _compute_clearance_at_config(self, joint_angles: List[float]) -> float:
-        """Compute minimum clearance to human at given joint configuration."""
-        if not self.person_detected:
-            return float('inf')
+    def _compute_clearance_at_config_detailed(self, joint_angles: List[float]) -> Tuple[float, str]:
+        """
+        Compute minimum clearance to human with details about closest body.
 
-        # Set robot to configuration
+        Returns:
+            (min_clearance, closest_body_name)
+        """
+        if not self.person_detected:
+            return float('inf'), 'none'
+
+        # Set robot to configuration using correct joint indices
         for i, angle in enumerate(joint_angles):
-            p.resetJointState(self.robot_id, i, angle,
+            joint_idx = self.planning_joints[i] if i < len(
+                self.planning_joints) else i
+            p.resetJointState(self.robot_id, joint_idx, angle,
                               physicsClientId=self.client)
 
         # Get closest points to all human bodies
         human_body_ids = self.human_model.get_all_body_ids()
         min_distance = float('inf')
+        closest_body_name = 'unknown'
+
+        # Get body names from human model
+        body_id_to_name = {v: k for k,
+                           v in self.human_model.collision_bodies.items()}
 
         for human_body_id in human_body_ids:
             closest_points = p.getClosestPoints(
@@ -498,14 +700,64 @@ class HumanAwarePathPlanner:
                 physicsClientId=self.client
             )
 
+            logger.debug(
+                f"Checking body {human_body_id}: {len(closest_points) if closest_points else 0} contact points")
+
+            if not closest_points:
+                logger.debug(
+                    f"  No contact points found for body {human_body_id} (might be > 1.0m away)")
+                continue
+
             for cp in closest_points:
                 distance = cp[8]  # Contact distance
+                logger.debug(f"  Contact distance: {distance:.4f}m")
+
                 # Negative means penetration - treat as collision
                 if distance < 0:
                     distance = 0.0
-                min_distance = min(min_distance, distance)
 
-        return min_distance if min_distance != float('inf') else 0.0
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_body_name = body_id_to_name.get(
+                        human_body_id, f'body_{human_body_id}')
+
+        if min_distance == float('inf'):
+            # No contact points found - everything is far away
+            logger.debug(
+                "No contact points found - all bodies > collision_check_distance")
+            logger.debug(
+                f"  collision_check_distance = {self.config.get('collision_check_distance', 1.0)}")
+            logger.debug(
+                "  Increasing search distance to 2.0m for this check...")
+
+            # Try again with larger distance
+            for human_body_id in human_body_ids:
+                closest_points = p.getClosestPoints(
+                    bodyA=self.robot_id,
+                    bodyB=human_body_id,
+                    distance=2.0,  # Search up to 2 meters
+                    physicsClientId=self.client
+                )
+                if closest_points:
+                    for cp in closest_points:
+                        distance = cp[8]
+                        if distance < 0:
+                            distance = 0.0
+                        if distance < min_distance:
+                            min_distance = distance
+                            closest_body_name = body_id_to_name.get(
+                                human_body_id, f'body_{human_body_id}')
+
+        final_distance = min_distance if min_distance != float(
+            'inf') else 2.0  # Return large value if still nothing
+        logger.debug(
+            f"Final clearance: {final_distance:.3f}m to {closest_body_name}")
+        return final_distance, closest_body_name
+
+    def _compute_clearance_at_config(self, joint_angles: List[float]) -> float:
+        """Compute minimum clearance to human at given joint configuration."""
+        clearance, _ = self._compute_clearance_at_config_detailed(joint_angles)
+        return clearance
 
     def _compute_min_clearance(self, trajectory: List[List[float]]) -> float:
         """Compute minimum clearance along entire trajectory."""

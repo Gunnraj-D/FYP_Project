@@ -334,8 +334,9 @@ PATH_PLANNING_CONFIG = {
     # SSM (Speed and Separation Monitoring) zones per ISO/TS 15066
     'comfort_distance': 0.50,          # ≥0.5m: normal speed (100%)
     'warning_distance': 0.30,          # ≥0.3m: reduced speed (50-100%)
-    'hard_min_distance': 0.15,         # ≥0.15m: critical/stop (0-50%)
-    'emergency_stop_distance': 0.10,   # <0.1m: immediate stop
+    # ≥0.12m: critical/stop (0-50%) - reduced for planning
+    'hard_min_distance': 0.12,
+    'emergency_stop_distance': 0.08,   # <0.08m: immediate stop
 
     # Speed scaling factors
     'speed_scale_comfort': 1.0,        # 100% speed in comfort zone
@@ -361,10 +362,12 @@ PATH_PLANNING_CONFIG = {
 HUMAN_MODEL_CONFIG = {
     # Primitive radii (inflated for safety margin)
     # These radii include the body segment radius + safety buffer
-    'head_radius': 0.20,               # 200mm sphere at NECK/NOSE
-    'torso_radius': 0.18,              # 180mm capsule CHEST_SPINE ↔ PELVIS
-    'arm_radius': 0.10,                # 100mm capsule for arm segments
-    'shoulder_radius': 0.15,           # 150mm sphere at clavicles
+    # Note: Significantly reduced for initial testing - increase after validation
+    # 100mm sphere at NECK/NOSE (testing value)
+    'head_radius': 0.10,
+    'torso_radius': 0.08,              # 80mm capsule (testing value)
+    'arm_radius': 0.05,                # 50mm capsule (testing value)
+    'shoulder_radius': 0.07,           # 70mm sphere (testing value)
 
     # Velocity-adaptive safety
     'velocity_inflation_enabled': True,
