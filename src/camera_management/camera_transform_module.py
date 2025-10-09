@@ -1,6 +1,15 @@
 """
 Camera Transform Module - Coordinate frame transformations.
 Handles transformations between camera frame and robot base frame.
+
+IMPORTANT - Pixel to 3D Conversion:
+    For converting pixel coordinates + depth to 3D camera coordinates, 
+    use CameraManager.pixel_to_3d() which uses the RealSense SDK function
+    rs.rs2_deproject_pixel_to_point(). This is the canonical method and handles
+    lens distortion correctly.
+    
+    This module focuses on higher-level coordinate frame transformations 
+    (camera -> TCP -> base) rather than low-level pixel deprojection.
 """
 import numpy as np
 from typing import List, Tuple
@@ -92,6 +101,39 @@ def transform_base_to_camera(base_position: List[float], tcp_matrix: np.ndarray)
         return np.array([0.0, 0.0, 0.0])
 
 
+def transform_camera_to_tcp_frame(camera_position: List[float]) -> np.ndarray:
+    """
+    Transform position from camera frame to TCP frame using calibrated hand-eye matrix.
+
+    This is a simplified version of transform_camera_to_base that only goes to TCP,
+    not all the way to base frame.
+
+    Args:
+        camera_position: [x, y, z] position in camera frame (meters)
+
+    Returns:
+        Position in TCP frame (meters)
+    """
+    try:
+        # Convert camera position to numpy array
+        camera_pos = np.array(camera_position, dtype=float)
+
+        # Use hand-eye matrix for camera-to-TCP transformation
+        camera_to_tcp = config_module.HAND_EYE_MATRIX
+
+        # Transform camera position to TCP frame
+        camera_pos_homogeneous = np.append(camera_pos, 1.0)
+        tcp_pos_homogeneous = camera_to_tcp @ camera_pos_homogeneous
+        tcp_pos = tcp_pos_homogeneous[:3]
+
+        logger.debug(f"Camera->TCP transformation: {camera_pos} -> {tcp_pos}")
+        return tcp_pos
+
+    except Exception as e:
+        logger.error(f"Failed to transform camera to TCP: {e}")
+        return np.array([0.0, 0.0, 0.0])
+
+
 def get_camera_intrinsics_matrix(intrinsics) -> np.ndarray:
     """
     Get camera intrinsics matrix from RealSense intrinsics.
@@ -114,47 +156,51 @@ def get_camera_intrinsics_matrix(intrinsics) -> np.ndarray:
         return np.eye(3)
 
 
-def pixel_to_camera_frame(u: int, v: int, depth: float, intrinsics) -> Tuple[float, float, float]:
-    """
-    Convert pixel coordinates to camera frame coordinates.
-
-    Args:
-        u, v: Pixel coordinates
-        depth: Depth value in meters
-        intrinsics: Camera intrinsics
-
-    Returns:
-        (x, y, z) coordinates in camera frame (meters)
-    """
-    try:
-        # Convert pixel to camera coordinates
-        x = (u - intrinsics.ppx) * depth / intrinsics.fx
-        y = (v - intrinsics.ppy) * depth / intrinsics.fy
-        z = depth
-
-        return (x, y, z)
-    except Exception as e:
-        logger.error(f"Failed to convert pixel to camera frame: {e}")
-        return (0.0, 0.0, 0.0)
-
-
 def camera_frame_to_pixel(x: float, y: float, z: float, intrinsics) -> Tuple[int, int]:
     """
     Convert camera frame coordinates to pixel coordinates.
+
+    Uses pinhole camera projection: u = fx * x/z + cx, v = fy * y/z + cy
 
     Args:
         x, y, z: Coordinates in camera frame (meters)
         intrinsics: Camera intrinsics
 
     Returns:
-        (u, v) pixel coordinates
+        (u, v) pixel coordinates, or (-1, -1) if point is behind camera or at camera origin
+
+    Note: Returns (-1, -1) sentinel value for invalid projections (z <= epsilon)
     """
     try:
-        # Convert camera coordinates to pixel
+        # Guard against division by zero or points behind/at the camera
+        # Use small epsilon to avoid numerical instability near z=0
+        Z_EPSILON = 1e-6
+
+        if z <= Z_EPSILON:
+            if z <= 0:
+                logger.warning(
+                    f"Cannot project point behind or at camera plane: "
+                    f"point=({x:.3f}, {y:.3f}, {z:.3f}). "
+                    f"Z must be > 0 for valid projection. Returning sentinel (-1, -1)."
+                )
+            else:
+                logger.warning(
+                    f"Point too close to camera origin for stable projection: "
+                    f"point=({x:.3f}, {y:.3f}, {z:.6f}). "
+                    f"Z={z:.6f} < epsilon={Z_EPSILON}. Returning sentinel (-1, -1)."
+                )
+            return (-1, -1)
+
+        # Convert camera coordinates to pixel using pinhole camera model
         u = int(x * intrinsics.fx / z + intrinsics.ppx)
         v = int(y * intrinsics.fy / z + intrinsics.ppy)
 
         return (u, v)
+
     except Exception as e:
-        logger.error(f"Failed to convert camera frame to pixel: {e}")
-        return (0, 0)
+        logger.error(
+            f"Failed to convert camera frame to pixel: {e}. "
+            f"Input: point=({x:.3f}, {y:.3f}, {z:.3f}). "
+            f"Returning sentinel (-1, -1)."
+        )
+        return (-1, -1)

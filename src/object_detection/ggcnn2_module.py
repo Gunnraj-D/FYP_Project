@@ -432,17 +432,20 @@ class GGcnn2Module:
                             return float(depth_np[vv, uu])
                 return None
 
-        # Get DEPTH intrinsics for width->meters conversion
-        # IMPORTANT: Must use depth stream intrinsics, not color stream intrinsics,
-        # because depth image resolution may differ from color resolution
-        depth_intr = getattr(self.camera_manager, "depth_intrinsics", None)
-        if depth_intr is None:
-            # Fallback to generic intrinsics for backward compatibility
-            depth_intr = getattr(self.camera_manager, "intrinsics", None)
-        fx = depth_intr.fx if (
-            depth_intr is not None and hasattr(depth_intr, "fx")) else None
-        depth_img_width = depth_intr.width if (
-            depth_intr is not None and hasattr(depth_intr, "width")) else None
+        # Get intrinsics for width->meters conversion
+        # IMPORTANT: Since we use ALIGNED depth frames (aligned to color), we must use
+        # aligned_color_intrinsics because the aligned depth has the same resolution and
+        # coordinate frame as the color stream
+        aligned_intr = getattr(self.camera_manager,
+                               "aligned_color_intrinsics", None)
+        if aligned_intr is None:
+            # Fallback to color_intrinsics for backward compatibility
+            aligned_intr = getattr(self.camera_manager,
+                                   "color_intrinsics", None)
+        fx = aligned_intr.fx if (
+            aligned_intr is not None and hasattr(aligned_intr, "fx")) else None
+        depth_img_width = aligned_intr.width if (
+            aligned_intr is not None and hasattr(aligned_intr, "width")) else None
 
         # gripper width min/max (meters). Add sensible defaults or use config
         grip_min = GRASP_EXECUTION_CONFIG.get('gripper_min_width_m', 0.02)
