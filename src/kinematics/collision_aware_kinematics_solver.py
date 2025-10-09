@@ -113,6 +113,12 @@ class CollisionAwareKinematicsSolver(InverseKinematicsSolver):
                     # Get minimum distance from all contact points
                     for cp in closest_points:
                         contact_distance = cp[8]  # Contact distance
+                        # Negative contactDistance indicates penetration/collision
+                        # Treat any negative distance as collision (clamp to 0)
+                        if contact_distance < 0:
+                            contact_distance = 0.0
+                            logger.debug(
+                                f"Collision detected on {link_name}: penetration depth {cp[8]:.4f}m")
                         min_distance = min(min_distance, contact_distance)
                 else:
                     # No contact points within check distance
@@ -123,7 +129,10 @@ class CollisionAwareKinematicsSolver(InverseKinematicsSolver):
                 logger.debug(f"Error checking clearance for {link_name}: {e}")
                 continue
 
-        return min_distance if min_distance != float('inf') else 0.0
+        # Clamp final result to zero if negative (safety check)
+        final_clearance = max(
+            0.0, min_distance if min_distance != float('inf') else 0.0)
+        return final_clearance
 
     def _sample_ik_candidates(self, target_position: List[float],
                               target_orientation: Optional[np.ndarray] = None,
@@ -165,6 +174,14 @@ class CollisionAwareKinematicsSolver(InverseKinematicsSolver):
             rest_pose = self.rest_poses[rest_pose_name]
 
             try:
+                # Seed IK by setting robot to current configuration
+                # This biases the solver toward the current state, combined with
+                # rest poses in nullspace to shape the solution
+                try:
+                    self._set_joint_states_from_list(initial_guess.tolist())
+                except Exception as e:
+                    logger.debug(f"Could not seed IK with current state: {e}")
+
                 # Compute IK with nullspace bias
                 solution = p.calculateInverseKinematics(
                     bodyUniqueId=self.robot_id,

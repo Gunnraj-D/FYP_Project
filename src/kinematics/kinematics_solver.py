@@ -40,7 +40,7 @@ def get_facing_down_orientation() -> np.ndarray:
     """
     Returns the 3x3 rotation matrix for a tool facing straight down.
     This corresponds to a 180-degree rotation around the world's X-axis.
-    
+
     This matrix flips the Y and Z axes, making the tool point downward (-Z direction)
     while keeping the X-axis unchanged. This is the standard orientation for
     top-down grasping tasks.
@@ -296,6 +296,13 @@ class InverseKinematicsSolver:
                 raise ValueError(
                     "target_orientation must be 3x3 rotation matrix")
             quat = self._rotation_matrix_to_quat(target_orientation)
+
+        # Seed IK by setting robot to current configuration to bias solution
+        # This helps PyBullet's IK solver start from a good initial guess
+        try:
+            self._set_joint_states_from_list(initial_full.tolist())
+        except Exception as e:
+            logger.debug(f"Could not seed IK with current joint state: {e}")
 
         # Call PyBullet IK
         try:
