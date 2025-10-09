@@ -311,6 +311,88 @@ ERROR_RECOVERY_CONFIG = {
 }
 
 # ============================================================================
+# HUMAN-AWARE PATH PLANNING CONFIGURATION
+# ============================================================================
+
+# Path planning parameters
+PATH_PLANNING_CONFIG = {
+    # Planner algorithm settings
+    'planner_type': 'rrt_connect',     # 'rrt_connect', 'birrt', 'prm'
+    'step_size': 0.1,                  # Joint space step size (radians)
+    'goal_bias': 0.2,                  # Probability of sampling goal (0-1)
+    'max_iterations': 5000,            # Maximum planning iterations
+    'planning_timeout': 0.5,           # Initial planning timeout (seconds)
+    'replan_timeout': 0.1,             # Replanning timeout (seconds)
+    'smoothing_iterations': 50,        # Post-processing smoothing passes
+
+    # Rolling horizon parameters
+    'horizon_time': 0.5,               # Plan ahead time (seconds)
+    'min_replan_interval': 0.5,        # Minimum time between replans (seconds)
+    'replan_threshold_position': 0.10,  # Replan if human moves >10cm
+    'replan_threshold_velocity': 0.30,  # Replan if human speed >0.3m/s
+
+    # SSM (Speed and Separation Monitoring) zones per ISO/TS 15066
+    'comfort_distance': 0.50,          # ≥0.5m: normal speed (100%)
+    'warning_distance': 0.30,          # ≥0.3m: reduced speed (50-100%)
+    'hard_min_distance': 0.15,         # ≥0.15m: critical/stop (0-50%)
+    'emergency_stop_distance': 0.10,   # <0.1m: immediate stop
+
+    # Speed scaling factors
+    'speed_scale_comfort': 1.0,        # 100% speed in comfort zone
+    'speed_scale_warning': 0.5,        # 50% speed in warning zone
+    'speed_scale_critical': 0.1,       # 10% speed near hard minimum
+
+    # Safety behavior
+    # Max time to wait when stopped (seconds)
+    'max_safety_wait_time': 10.0,
+    # Distance to check for collisions (meters)
+    'collision_check_distance': 1.0,
+
+    # ISO/TS 15066 SSM parameters
+    'reaction_time': 0.2,              # System reaction time T_r (seconds)
+    'stop_time_max': 1.0,              # Maximum stop time T_s (seconds)
+    'intrusion_distance': 0.05,        # Intrusion tolerance C (meters)
+    'position_uncertainty': 0.03,      # ZED position uncertainty Z_d (meters)
+    # Robot position uncertainty Z_r (meters)
+    'robot_uncertainty': 0.02,
+}
+
+# Human body collision model configuration
+HUMAN_MODEL_CONFIG = {
+    # Primitive radii (inflated for safety margin)
+    # These radii include the body segment radius + safety buffer
+    'head_radius': 0.20,               # 200mm sphere at NECK/NOSE
+    'torso_radius': 0.18,              # 180mm capsule CHEST_SPINE ↔ PELVIS
+    'arm_radius': 0.10,                # 100mm capsule for arm segments
+    'shoulder_radius': 0.15,           # 150mm sphere at clavicles
+
+    # Velocity-adaptive safety
+    'velocity_inflation_enabled': True,
+    # Additional radius = v_human * factor (s)
+    'velocity_inflation_factor': 0.15,
+    'max_velocity_inflation': 0.10,     # Cap additional inflation at 100mm
+
+    # Tracking confidence
+    # Drop joints below this confidence (if available)
+    'min_joint_confidence': 0.5,
+    'tracking_timeout': 1.0,            # Keep last position for 1s after tracking loss
+
+    # Model limits
+    'max_primitives_per_person': 15,    # Maximum collision primitives
+}
+
+# Critical joints to track for single person
+# ZED BODY_38 joint names - positions already in robot base frame (meters)
+TRACKED_HUMAN_JOINTS = {
+    'head_neck': ['NECK', 'NOSE'],
+    # CHEST_SPINE or SPINE_2 depending on ZED version
+    'torso': ['CHEST_SPINE', 'SPINE_2', 'PELVIS'],
+    'left_arm': ['LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST'],
+    'right_arm': ['RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST'],
+    'shoulders': ['LEFT_CLAVICLE', 'RIGHT_CLAVICLE']
+}
+
+# ============================================================================
 # HAND-EYE CALIBRATION MATRIX
 # ============================================================================
 

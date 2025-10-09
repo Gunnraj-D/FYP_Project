@@ -18,10 +18,13 @@ from states.grasping_state import GraspingState
 from states.unified_hand_tracking_state import UnifiedHandTrackingState
 from states.gripper_state import GripperControlState
 from states.move_to_state import MoveToState
+from states.human_aware_move_to_state import HumanAwareMoveToState
+from states.human_handoff_approach_state import HumanHandoffApproachState
 from states.base_state import BaseState
 from states.state_machine import StateMachine
 from states.context import StateContext
 from integrated_robot_control_system import IntegratedRobotControlSystem, SystemMode
+from hand_detection.zed_joint_receiver import ZEDJointReceiver
 import os
 import time
 import logging
@@ -62,6 +65,11 @@ logging.getLogger('states.move_to_state').setLevel(logging.INFO)
 logging.getLogger('control.telemetry_store').setLevel(logging.ERROR)
 logging.getLogger('IO_handling.opc_client_factory').setLevel(logging.INFO)
 logging.getLogger('IO_handling.opc_client').setLevel(logging.INFO)
+# Enable human-aware state logging for debugging
+logging.getLogger('states.human_aware_move_to_state').setLevel(logging.INFO)
+logging.getLogger('states.human_handoff_approach_state').setLevel(logging.INFO)
+logging.getLogger('kinematics.human_aware_path_planner').setLevel(logging.INFO)
+logging.getLogger('hand_detection.zed_joint_receiver').setLevel(logging.INFO)
 
 # Suppress additional noisy loggers
 warnings.filterwarnings("ignore", category=UserWarning,
@@ -92,6 +100,9 @@ class DebugSystemManager:
         self.mock_server = None
         self.mock_server_thread: Optional[threading.Thread] = None
         self._shutdown_event = threading.Event()
+
+        # ZED skeleton tracking
+        self.zed_receiver: Optional[ZEDJointReceiver] = None
 
     def start_mock_server(self):
         """Start mock server in background thread with proper event loop."""
@@ -159,13 +170,25 @@ class DebugSystemManager:
                 f"🚀 Initializing Debug Robot Control System in '{self.opc_mode}' mode...")
             self.system = IntegratedRobotControlSystem(opc_mode=self.opc_mode)
 
+            # Initialize ZED receiver (optional - for human-aware planning)
+            try:
+                self.zed_receiver = ZEDJointReceiver(
+                    host='127.0.0.1', port=5005)
+                self.zed_receiver.start()
+                logger.info(
+                    "✅ ZED Joint Receiver started (waiting for Unity connection)")
+            except Exception as e:
+                logger.warning(f"⚠️ ZED receiver not started: {e}")
+                self.zed_receiver = None
+
             # Get the context from the system
             self.context = StateContext(
                 telemetry=self.system.telemetry,
                 commands=self.system.command_bus,
                 camera=self.system.camera_manager,
                 opc=self.system.opc_client,
-                ik=self.system.kinematics_solver
+                ik=self.system.kinematics_solver,
+                zed_receiver=self.zed_receiver
             )
 
             # Create a state machine for debug execution
@@ -249,6 +272,15 @@ class DebugSystemManager:
 
     def stop_system(self):
         """Stop the robot control system."""
+        # Stop ZED receiver
+        if self.zed_receiver:
+            try:
+                self.zed_receiver.stop()
+                print("✅ ZED receiver stopped")
+            except Exception as e:
+                print(f"⚠️ Error stopping ZED receiver: {e}")
+            self.zed_receiver = None
+
         if self.system:
             print("🛑 Stopping debug robot control system...")
             try:
@@ -284,6 +316,8 @@ class DebugSystemManager:
 
     def get_available_states(self) -> Dict[int, BaseState]:
         """Get dictionary of available states for execution."""
+        from kinematics.kinematics_solver import get_facing_down_orientation
+
         states = {
             # Reasonable position in workspace
             1: MoveToState(self.context, target_location=(0.3, 0.415, 0.6)),
@@ -293,8 +327,29 @@ class DebugSystemManager:
             4: GripperControlState(self.context, action='close'),
             5: UnifiedHandTrackingState(self.context),
             6: GraspingState(self.context),
+            7: HumanAwareMoveToState(
+                context=self.context,
+                target_position=[0.3, 0.415, 0.6],
+                target_orientation=get_facing_down_orientation()
+            ) if self.zed_receiver else None,
+            8: HumanAwareMoveToState(
+                context=self.context,
+                target_position=list(PICKUP_LOCATION['position']),
+                target_orientation=get_facing_down_orientation()
+            ) if self.zed_receiver else None,
+            9: HumanHandoffApproachState(
+                context=self.context,
+                approach_offset=[0.0, 0.0, 0.30],  # 30cm above right hand
+                hand_joint_name='RIGHT_WRIST'
+            ) if self.zed_receiver else None,
+            10: HumanHandoffApproachState(
+                context=self.context,
+                approach_offset=[0.0, 0.0, 0.30],
+                hand_joint_name='LEFT_WRIST'  # Left hand variant
+            ) if self.zed_receiver else None,
         }
-        return states
+        # Remove None entries (ZED not available)
+        return {k: v for k, v in states.items() if v is not None}
 
     def get_available_sequencers(self) -> Dict[int, str]:
         """Get dictionary of available task sequencers."""
@@ -555,6 +610,8 @@ class DebugSystemManager:
             state_num = int(parts[1])
 
             # Create fresh state instance based on state number
+            from kinematics.kinematics_solver import get_facing_down_orientation
+
             if state_num == 1:
                 state = MoveToState(
                     self.context, target_location=(0.3, 0.415, 0.4))
@@ -569,6 +626,42 @@ class DebugSystemManager:
                 state = UnifiedHandTrackingState(self.context)
             elif state_num == 6:
                 state = GraspingState(self.context)
+            elif state_num == 7:
+                if not self.zed_receiver:
+                    print("❌ ZED receiver not running. Start Unity with ZED first.")
+                    return
+                state = HumanAwareMoveToState(
+                    context=self.context,
+                    target_position=[0.3, 0.415, 0.6],
+                    target_orientation=get_facing_down_orientation()
+                )
+            elif state_num == 8:
+                if not self.zed_receiver:
+                    print("❌ ZED receiver not running. Start Unity with ZED first.")
+                    return
+                state = HumanAwareMoveToState(
+                    context=self.context,
+                    target_position=list(PICKUP_LOCATION['position']),
+                    target_orientation=get_facing_down_orientation()
+                )
+            elif state_num == 9:
+                if not self.zed_receiver:
+                    print("❌ ZED receiver not running. Start Unity with ZED first.")
+                    return
+                state = HumanHandoffApproachState(
+                    context=self.context,
+                    approach_offset=[0.0, 0.0, 0.30],
+                    hand_joint_name='RIGHT_WRIST'
+                )
+            elif state_num == 10:
+                if not self.zed_receiver:
+                    print("❌ ZED receiver not running. Start Unity with ZED first.")
+                    return
+                state = HumanHandoffApproachState(
+                    context=self.context,
+                    approach_offset=[0.0, 0.0, 0.30],
+                    hand_joint_name='LEFT_WRIST'
+                )
             else:
                 print(f"❌ Invalid state number: {state_num}")
                 return

@@ -7,6 +7,7 @@ from IO_handling.opc_client import OPCClient
 from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
 from typing import Optional
 
+
 @dataclass(frozen=True)
 class StateContext:
     telemetry: Telemetry
@@ -14,4 +15,5 @@ class StateContext:
     camera: CameraManager
     opc: OPCClient
     ik: CollisionAwareKinematicsSolver
-    hand_tracker: Optional[object] = None  
+    hand_tracker: Optional[object] = None
+    zed_receiver: Optional[object] = None  # ZED skeleton tracking receiver
