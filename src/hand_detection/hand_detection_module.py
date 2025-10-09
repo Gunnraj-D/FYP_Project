@@ -190,9 +190,11 @@ class HandTracker:
         # Draw palm info
         if palm_pos and depth > 0:
             palm_x, palm_y, radius = palm_pos
-            flipped_x = w - palm_x
+            # Mirror X coordinate for display (common in camera apps for natural feel)
+            # But use actual coordinates for depth calculation
+            display_x = w - palm_x
 
-            cv2.circle(frame, (flipped_x, palm_y), radius, (255, 255, 0), 2)
+            cv2.circle(frame, (display_x, palm_y), radius, (255, 255, 0), 2)
             cv2.putText(frame, f"Depth: {depth:.2f}m", (10, 70),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
             cv2.putText(frame, f"Cam: ({vector_3d_cam[0]:.2f}, {vector_3d_cam[1]:.2f}, {vector_3d_cam[2]:.2f})",
@@ -282,10 +284,9 @@ class HandTracker:
                     if centroid is not None:
                         h, w = color_frame.shape[:2]
                         palm_x = int(centroid[0] * w)
-                        # Flip Y coordinate: MediaPipe Y (0=top, 1=bottom) -> Pixel Y (0=top, h=bottom)
-                        # But we need Y to point "down" in camera frame to match robot frame
-                        # Flip Y coordinate
-                        palm_y = int((1.0 - centroid[1]) * h)
+                        # MediaPipe Y (0=top, 1=bottom) matches OpenCV Y (0=top, h=bottom)
+                        # No flip needed for pixel coordinates
+                        palm_y = int(centroid[1] * h)
                         pixel_radius = int(radius * min(w, h))
 
                         # Use shared camera manager for depth calculation
