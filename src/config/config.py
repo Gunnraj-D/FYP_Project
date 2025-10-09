@@ -318,12 +318,15 @@ ERROR_RECOVERY_CONFIG = {
 PATH_PLANNING_CONFIG = {
     # Planner algorithm settings
     'planner_type': 'rrt_connect',     # 'rrt_connect', 'birrt', 'prm'
-    'step_size': 0.1,                  # Joint space step size (radians)
-    'goal_bias': 0.2,                  # Probability of sampling goal (0-1)
-    'max_iterations': 5000,            # Maximum planning iterations
+    # Joint space step size (radians) - INCREASED for speed
+    'step_size': 0.15,
+    # Probability of sampling goal (0-1) - INCREASED for faster convergence
+    'goal_bias': 0.3,
+    'max_iterations': 2000,            # Maximum planning iterations - REDUCED for speed
     'planning_timeout': 0.5,           # Initial planning timeout (seconds)
     'replan_timeout': 0.1,             # Replanning timeout (seconds)
-    'smoothing_iterations': 50,        # Post-processing smoothing passes
+    # Post-processing smoothing passes - REDUCED for speed
+    'smoothing_iterations': 20,
 
     # Rolling horizon parameters
     'horizon_time': 0.5,               # Plan ahead time (seconds)

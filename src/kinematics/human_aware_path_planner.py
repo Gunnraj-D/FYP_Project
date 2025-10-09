@@ -625,10 +625,10 @@ class HumanAwarePathPlanner:
                 obstacles=human_bodies,  # Now using proper obstacles!
                 self_collisions=False,
                 disabled_collisions=set(),
-                max_distance=self.config.get('step_size', 0.1),
-                restarts=5,  # More restarts to handle difficult cases
-                iterations=self.config.get('max_iterations', 5000),
-                smooth=self.config.get('smoothing_iterations', 50),
+                max_distance=self.config.get('step_size', 0.15),
+                restarts=2,  # Reduced restarts for speed (was 5)
+                iterations=self.config.get('max_iterations', 2000),
+                smooth=self.config.get('smoothing_iterations', 20),
                 custom_limits={},
                 diagnosis=False,
                 physicsClientId=self.client
