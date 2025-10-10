@@ -327,6 +327,9 @@ class DebugSystemManager:
             4: GripperControlState(self.context, action='close'),
             5: UnifiedHandTrackingState(self.context),
             6: GraspingState(self.context),
+            # Safe retreat position (far from human interaction zone)
+            # Far left, high
+            11: MoveToState(self.context, target_location=(-0.4, 0.4, 0.5)),
             7: HumanAwareMoveToState(
                 context=self.context,
                 target_position=[0.3, 0.415, 0.6],
@@ -662,6 +665,10 @@ class DebugSystemManager:
                     approach_offset=[0.0, 0.0, 0.30],
                     hand_joint_name='LEFT_WRIST'
                 )
+            elif state_num == 11:
+                # Safe retreat position
+                state = MoveToState(
+                    self.context, target_location=(-0.4, 0.4, 0.5))
             else:
                 print(f"❌ Invalid state number: {state_num}")
                 return

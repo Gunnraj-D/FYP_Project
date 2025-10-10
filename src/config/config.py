@@ -67,7 +67,7 @@ OPC_MOCK_SERVER_URL = "opc.tcp://127.0.0.1:4840/"
 # Robot 2 -> namespace 22, nodes like R2d_Status, R2c_Joi1, etc.
 # Robot 3 -> namespace 23, nodes like R3d_Status, R3c_Joi1, etc.
 # Robot 4 -> namespace 24, nodes like R4d_Status, R4c_Joi1, etc.
-ROBOT_ID = 3  # Default to robot 1, can be changed to 1, 2, 3, or 4
+ROBOT_ID = 1  # Default to robot 1, can be changed to 1, 2, 3, or 4
 
 
 def get_robot_name(robot_id: int = ROBOT_ID) -> str:
@@ -414,13 +414,15 @@ CAMERA_TRANSFORM_MODE = 'simple'
 #   Forward:  tcp_pos = HAND_EYE_MATRIX @ camera_pos_homogeneous
 #   Inverse:  camera_pos = inv(HAND_EYE_MATRIX) @ tcp_pos_homogeneous
 #
-# Generated from 13 best calibration poses using Park method (pruned from 18 total poses)
-# Translation: 0.280m (reasonable ~28cm camera-to-TCP distance)
-# Mean calibration error: 0.647 (5x improvement over all poses)
+# Generated from 15 best calibration poses using Park method (from 31 unique poses)
+# Translation: 0.0476m (4.76cm camera-to-TCP, ~9cm from gripper base)
+# Note: TCP is defined 13.8cm from gripper base in URDF
+# Reprojection errors: 0.009-0.021 pixels (excellent sub-pixel accuracy)
+# Calibration date: 2025-10-10
 HAND_EYE_MATRIX_CALIBRATED = np.array([
-    [-0.9996,  0.0258,  0.0120,  0.0009],
-    [-0.0284, -0.9361, -0.3507, -0.0683],
-    [0.0022, -0.3509,  0.9364,  0.2714],
+    [-0.9997, -0.0168, -0.0168,  0.0069],
+    [0.0218, -0.9331, -0.3589,  0.0469],
+    [-0.0096, -0.3591,  0.9332, -0.0041],
     [0.0000,  0.0000,  0.0000,  1.0000]
 ], dtype=np.float64)  # Use float64 for numerical precision
 
