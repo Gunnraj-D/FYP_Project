@@ -184,7 +184,7 @@ def demonstrate_configuration_integration():
     logger.info("\n=== Configuration Integration Demonstration ===")
 
     # Import configuration
-    from config.config import (
+    from config import (
         GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG,
         HAND_STABILITY_THRESHOLD, HAND_STABILITY_TIME_THRESHOLD,
         CAMERA_TRANSLATION, CAMERA_ROTATION_EULER

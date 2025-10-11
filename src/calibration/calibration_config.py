@@ -2,7 +2,7 @@
 Configuration for hand-eye calibration system.
 """
 import cv2
-from config.config import (
+from config import (
     ROBOT_ID, URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS,
     CAMERA_TRANSLATION, CAMERA_ROTATION_EULER
 )

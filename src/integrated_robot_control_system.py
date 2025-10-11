@@ -22,7 +22,7 @@ from states.task_orchestrator import TaskOrchestrator, TaskPhase
 from states.base_state import BaseState
 
 # Configuration
-from config.config import (
+from config import (
     LOOP_RATE_MS, URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS,
     OPC_SERVER_URL, OPC_OBJECTS_NAME, GGCNN2_MODEL_PATH, ROBOT_ID, get_robot_name
 )

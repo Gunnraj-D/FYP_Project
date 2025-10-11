@@ -8,7 +8,7 @@ Provides forward and inverse kinematics and matching API:
 - solve_tcp(joint_angles_full)
 Note: Positions are expected in METERS for PyBullet.
 """
-from config.config import JOINT_LIMITS
+from config import JOINT_LIMITS
 import sys
 from pathlib import Path
 from typing import List, Optional

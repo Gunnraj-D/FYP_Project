@@ -13,7 +13,7 @@ from states.task_sequencer import TaskSequencer
 from states.move_to_state import MoveToState
 from states.gripper_state import GripperControlState
 from states.unified_hand_tracking_state import UnifiedHandTrackingState
-from config.config import HANDOFF_APPROACH_POSE
+from config import HANDOFF_APPROACH_POSE
 
 logger = logging.getLogger(__name__)
 

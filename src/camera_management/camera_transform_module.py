@@ -15,8 +15,8 @@ import numpy as np
 from typing import List, Tuple
 import logging
 
-from config.config import CAMERA_TRANSLATION, CAMERA_ROTATION_EULER
-import config.config as config_module
+from config import CAMERA_TRANSLATION, CAMERA_ROTATION_EULER
+import config as config_module
 
 logger = logging.getLogger(__name__)
 

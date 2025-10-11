@@ -11,7 +11,7 @@ from IO_handling.opc_client import OPCClient, OPCConfig
 from kinematics.kinematics_solver import InverseKinematicsSolver
 from states.context import StateContext
 from states.generate_pickup_state import GeneratePickupState
-from config.config import (
+from config import (
     URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS,
     OPC_SERVER_URL, OPC_OBJECTS_NAME, ROBOT_ID, get_robot_name
 )

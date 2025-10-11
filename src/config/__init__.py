@@ -16,7 +16,7 @@ USAGE (New, cleaner syntax):
     from config import GRASP_DETECTION_CONFIG, DEBUG_MODE, ROBOT_ID
 
 LEGACY USAGE (still works):
-    from config.config import GRASP_DETECTION_CONFIG  # But no longer needed!
+    from config import GRASP_DETECTION_CONFIG  # But no longer needed!
 
 All imports work - zero breaking changes, but the new syntax is cleaner!
 """
@@ -55,6 +55,8 @@ from config.robot_config import (
     ROBOT_ID,
     get_robot_name,
     get_robot_namespace,
+    BASE_ELEMENT,
+    ACTIVE_LINKS,
     JOINT_LIMITS,
     GRIPPER_CONFIG,
     PICKUP_LOCATION,
@@ -105,7 +107,7 @@ from config.system_config import (
 )
 
 # ============================================================================
-# EXPORT ALL (for "from config.config import *")
+# EXPORT ALL (for "from config import *")
 # ============================================================================
 
 __all__ = [
@@ -134,6 +136,8 @@ __all__ = [
     'ROBOT_ID',
     'get_robot_name',
     'get_robot_namespace',
+    'BASE_ELEMENT',
+    'ACTIVE_LINKS',
     'JOINT_LIMITS',
     'GRIPPER_CONFIG',
     'PICKUP_LOCATION',

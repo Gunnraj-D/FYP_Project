@@ -15,7 +15,7 @@ import pybullet as p
 from typing import List, Optional, Tuple, Dict, Any
 from scipy.spatial.transform import Rotation as R
 
-from config.config import (
+from config import (
     JOINT_LIMITS,
     COLLISION_AVOIDANCE_CONFIG,
     REST_POSES,

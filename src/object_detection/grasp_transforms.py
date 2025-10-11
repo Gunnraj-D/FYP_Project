@@ -14,7 +14,7 @@ from scipy.spatial.transform import Rotation as R
 
 from camera_management.camera_transform_module import transform_camera_to_base
 from kinematics.kinematics_solver import get_facing_down_orientation
-from config.config import GRASP_DETECTION_CONFIG, CAMERA_ROTATION_EULER
+from config import GRASP_DETECTION_CONFIG, CAMERA_ROTATION_EULER
 
 logger = logging.getLogger(__name__)
 

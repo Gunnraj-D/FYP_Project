@@ -4,7 +4,7 @@ Extract full transformation matrices for all calibration poses.
 """
 from calibration.calibration_config import CalibrationConfig
 from kinematics.kinematics_solver import InverseKinematicsSolver
-from config.config import URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS
+from config import URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS
 import numpy as np
 import json
 from pathlib import Path

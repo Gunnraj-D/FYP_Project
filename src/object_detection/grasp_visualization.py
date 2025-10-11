@@ -11,7 +11,7 @@ import numpy as np
 import logging
 from typing import Dict, Optional
 
-from config.config import DEBUG_MODE, DEBUG_CONFIG
+from config import DEBUG_MODE, DEBUG_CONFIG
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from calibration.calibration_config import CalibrationConfig  # noqa: E402
 from kinematics.kinematics_solver import InverseKinematicsSolver  # noqa: E402
-from config.config import URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS  # noqa: E402
+from config import URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS  # noqa: E402
 
 
 def load_calibration_data_from_specific_poses():

@@ -8,7 +8,7 @@ import time
 import numpy as np
 from dataclasses import dataclass, field
 
-from config.config import HAND_STABILITY_THRESHOLD
+from config import HAND_STABILITY_THRESHOLD
 
 
 @dataclass

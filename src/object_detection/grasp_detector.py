@@ -40,7 +40,7 @@ from object_detection.grasp_transforms import GraspTransformer
 from object_detection.grasp_visualization import GraspVisualizer
 
 # Config
-from config.config import (
+from config import (
     GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE,
     GRASP_MODEL_TYPE, GRCONVNET_CONFIG, GGCNN2_MODEL_PATH, GRCONVNET_MODEL_PATH
 )

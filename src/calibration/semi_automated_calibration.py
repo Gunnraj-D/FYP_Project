@@ -86,7 +86,7 @@ class SemiAutomatedCalibrator:
 
                     async def start_server():
                         from IO_handling.mock_opc_server import MockOPCServer
-                        from config.config import ROBOT_ID
+                        from config import ROBOT_ID
                         self.mock_server = MockOPCServer(
                             url="opc.tcp://127.0.0.1:4840/", robot_id=ROBOT_ID)
                         await self.mock_server.initialize()

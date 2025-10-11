@@ -24,7 +24,7 @@ from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematic
 from kinematics.kinematics_solver import get_facing_down_orientation
 from object_detection.ggcnn2 import GGCNN2
 from object_detection.grconvnet import GRConvNet
-from config.config import (
+from config import (
     GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE, DEBUG_CONFIG,
     GRASP_MODEL_TYPE, GRCONVNET_CONFIG, GGCNN2_MODEL_PATH, GRCONVNET_MODEL_PATH
 )
@@ -1004,7 +1004,7 @@ class GGcnn2Module:
 
             # Proper orientation transformation accounting for camera mounting
             # Camera orientation relative to TCP (from config)
-            from config.config import CAMERA_ROTATION_EULER
+            from config import CAMERA_ROTATION_EULER
             from scipy.spatial.transform import Rotation as R
 
             # Get camera mounting rotation (TCP -> Camera)

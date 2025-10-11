@@ -14,7 +14,7 @@ import logging
 from typing import Optional, Dict, List, Tuple
 from collections import deque
 
-from config.config import GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE
+from config import GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE
 
 logger = logging.getLogger(__name__)
 

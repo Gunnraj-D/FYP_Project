@@ -11,7 +11,7 @@ import sys
 # Add src to path FIRST
 sys.path.append(str(Path(__file__).parent))
 
-from config.config import URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS  # noqa: E402
+from config import URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS  # noqa: E402
 from kinematics.kinematics_solver import InverseKinematicsSolver  # noqa: E402
 from calibration.calibration_config import CalibrationConfig  # noqa: E402
 

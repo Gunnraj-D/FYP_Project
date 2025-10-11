@@ -95,7 +95,7 @@ class HumanModelAdapter:
         Returns dict of {joint_name: [x, y, z]} for joints that are present.
         ZED positions are ALREADY in robot base frame - no transform needed!
         """
-        from config.config import TRACKED_HUMAN_JOINTS
+        from config import TRACKED_HUMAN_JOINTS
 
         positions = {}
         found_joints = []
@@ -354,7 +354,7 @@ class HumanAwarePathPlanner:
         # TODO: Load table/environment obstacles
 
         # Initialize human model adapter
-        from config.config import HUMAN_MODEL_CONFIG
+        from config import HUMAN_MODEL_CONFIG
         self.human_model = HumanModelAdapter(self.client, HUMAN_MODEL_CONFIG)
 
         # Planning state

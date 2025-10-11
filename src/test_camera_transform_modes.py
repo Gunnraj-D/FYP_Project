@@ -3,7 +3,7 @@ Test script to compare calibrated vs simple camera transform modes.
 Shows the difference in transformation results between the two modes.
 """
 import numpy as np
-from config.config import (
+from config import (
     set_camera_transform_mode,
     get_camera_transform_info,
     print_camera_transform_info,

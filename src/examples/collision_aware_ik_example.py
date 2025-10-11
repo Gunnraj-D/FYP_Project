@@ -2,7 +2,7 @@
 Example demonstrating collision-aware inverse kinematics.
 Shows how to use the CollisionAwareKinematicsSolver to avoid table collisions.
 """
-from config.config import URDF_FILEPATH, get_facing_down_orientation
+from config import URDF_FILEPATH, get_facing_down_orientation
 from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
 import sys
 import os

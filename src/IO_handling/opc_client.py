@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from control.command_bus import CommandBus, Command, SetJoints, SetGripper, EmergencyStop
 from control.telemetry_store import Telemetry
-from config.config import (
+from config import (
     OPC_SERVER_URL, OPC_OBJECTS_NAME, OPC_UPDATE_INTERVAL_SECONDS,
     OPC_POLL_INTERVAL_MS, OPC_COMMAND_BATCH_SIZE, OPC_SKIP_REDUNDANT_WRITES,
     OPC_CONNECTION_TIMEOUT_SECONDS, OPC_RECONNECT_DELAY_SECONDS, OPC_MAX_RECONNECT_ATTEMPTS,

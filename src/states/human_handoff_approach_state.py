@@ -109,7 +109,7 @@ class HumanHandoffApproachState(BaseState):
 
         # Import here to avoid circular dependencies
         from kinematics.human_aware_path_planner import HumanAwarePathPlanner
-        from config.config import PATH_PLANNING_CONFIG, URDF_FILEPATH
+        from config import PATH_PLANNING_CONFIG, URDF_FILEPATH
 
         # Initialize planner
         try:
@@ -280,7 +280,7 @@ class HumanHandoffApproachState(BaseState):
 
     def _should_replan_for_target_update(self) -> bool:
         """Check if target moved enough to warrant replanning."""
-        from config.config import PATH_PLANNING_CONFIG
+        from config import PATH_PLANNING_CONFIG
 
         # Rate limit replanning
         current_time = time.time()
@@ -374,7 +374,7 @@ class HumanHandoffApproachState(BaseState):
 
     def _compute_speed_scale(self, clearance: float) -> float:
         """Compute speed scaling based on clearance (SSM)."""
-        from config.config import PATH_PLANNING_CONFIG
+        from config import PATH_PLANNING_CONFIG
 
         comfort_dist = PATH_PLANNING_CONFIG.get('comfort_distance', 0.5)
         warning_dist = PATH_PLANNING_CONFIG.get('warning_distance', 0.3)
@@ -410,7 +410,7 @@ class HumanHandoffApproachState(BaseState):
 
     def _handle_safety_stop(self):
         """Handle state when stopped for safety."""
-        from config.config import PATH_PLANNING_CONFIG
+        from config import PATH_PLANNING_CONFIG
 
         # Check if we've been waiting too long
         max_wait_time = PATH_PLANNING_CONFIG.get('max_safety_wait_time', 10.0)

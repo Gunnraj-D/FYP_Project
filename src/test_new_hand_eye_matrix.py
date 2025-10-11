@@ -3,7 +3,7 @@
 Test script to verify the new hand-eye calibration matrix integration.
 """
 import numpy as np
-from config.config import (
+from config import (
     HAND_EYE_MATRIX_CALIBRATED,
     HAND_EYE_MATRIX,
     CAMERA_TRANSFORM_MODE,

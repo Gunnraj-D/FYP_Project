@@ -2,7 +2,7 @@
 Integration example showing how to replace standard kinematics solver
 with collision-aware version in existing code.
 """
-from config.config import URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS
+from config import URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS
 from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
 import sys
 import os

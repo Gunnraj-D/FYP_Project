@@ -18,7 +18,7 @@ import threading
 from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus, Command
 from camera_management.camera_manager import CameraManager
-from config.config import HANDMODEL_FILEPATH
+from config import HANDMODEL_FILEPATH
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

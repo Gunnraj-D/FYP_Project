@@ -3,7 +3,7 @@
 Test script to verify hand-eye matrix integration in the main application.
 """
 from camera_management.camera_transform_module import transform_camera_to_base, transform_base_to_camera
-from config.config import HAND_EYE_MATRIX, HAND_EYE_MATRIX_FILE
+from config import HAND_EYE_MATRIX, HAND_EYE_MATRIX_FILE
 import numpy as np
 import sys
 from pathlib import Path

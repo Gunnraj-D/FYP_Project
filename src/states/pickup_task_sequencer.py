@@ -13,7 +13,7 @@ from states.task_sequencer import TaskSequencer
 from states.move_to_state import MoveToState
 from states.gripper_state import GripperControlState
 from states.grasping_state import GraspingState
-from config.config import PICKUP_LOCATION
+from config import PICKUP_LOCATION
 
 logger = logging.getLogger(__name__)
 

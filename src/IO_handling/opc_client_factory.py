@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from control.command_bus import CommandBus
 from control.telemetry_store import Telemetry
-from config.config import OPC_MODE, OPC_SERVER_URL, OPC_MOCK_SERVER_URL, ROBOT_ID
+from config import OPC_MODE, OPC_SERVER_URL, OPC_MOCK_SERVER_URL, ROBOT_ID
 
 logger = logging.getLogger(__name__)
 

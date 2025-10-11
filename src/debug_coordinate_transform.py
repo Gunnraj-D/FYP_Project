@@ -4,7 +4,7 @@ This helps identify where sideways offsets are introduced.
 """
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-from config.config import (
+from config import (
     HAND_EYE_MATRIX,
     HAND_EYE_MATRIX_CALIBRATED,
     HAND_EYE_MATRIX_SIMPLE,

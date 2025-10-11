@@ -89,7 +89,7 @@ class HumanAwareMoveToState(BaseState):
 
         # Import here to avoid circular dependencies
         from kinematics.human_aware_path_planner import HumanAwarePathPlanner
-        from config.config import PATH_PLANNING_CONFIG, URDF_FILEPATH
+        from config import PATH_PLANNING_CONFIG, URDF_FILEPATH
 
         # Initialize planner
         try:
@@ -257,7 +257,7 @@ class HumanAwareMoveToState(BaseState):
 
     def _should_replan(self) -> bool:
         """Determine if replanning is needed based on human motion."""
-        from config.config import PATH_PLANNING_CONFIG
+        from config import PATH_PLANNING_CONFIG
 
         # Rate limit replanning
         current_time = time.time()
@@ -314,7 +314,7 @@ class HumanAwareMoveToState(BaseState):
         Returns:
             Speed scale factor [0.0, 1.0]
         """
-        from config.config import PATH_PLANNING_CONFIG
+        from config import PATH_PLANNING_CONFIG
 
         comfort_dist = PATH_PLANNING_CONFIG.get('comfort_distance', 0.5)
         warning_dist = PATH_PLANNING_CONFIG.get('warning_distance', 0.3)
@@ -356,7 +356,7 @@ class HumanAwareMoveToState(BaseState):
 
     def _handle_safety_stop(self):
         """Handle state when stopped for safety."""
-        from config.config import PATH_PLANNING_CONFIG
+        from config import PATH_PLANNING_CONFIG
 
         # Check if we've been waiting too long
         max_wait_time = PATH_PLANNING_CONFIG.get('max_safety_wait_time', 10.0)

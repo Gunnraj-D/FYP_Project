@@ -15,7 +15,7 @@ from states.context import StateContext
 from control.command_bus import SetJoints
 from hand_detection.hand_detection_module import HandTracker
 from camera_management.camera_transform_module import transform_camera_to_base
-from config.config import (
+from config import (
     HAND_STABILITY_TIME_THRESHOLD,
     HAND_STABILITY_THRESHOLD,
     DISTANCE_TO_REMAIN_M
