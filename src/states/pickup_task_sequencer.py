@@ -33,6 +33,9 @@ class PickupTaskSequencer(TaskSequencer):
     """
 
     def __init__(self, state_machine: StateMachine, context: StateContext):
+        # Set Z offset before creating sequence (it's needed during sequence creation)
+        self.z_offset = 0.2  # 20cm above grasp position
+
         # Create the sequence of states for pickup task
         pickup_states = self._create_pickup_sequence(context)
 
@@ -56,7 +59,7 @@ class PickupTaskSequencer(TaskSequencer):
         states = []
 
         # Get Z offset (default 8cm)
-        z_offset = getattr(self, 'z_offset', 0.2)
+        # z_offset = getattr(self, 'z_offset', 0.2)
 
         states.append(MoveToState(
             context, target_location=PICKUP_LOCATION["position"]))
@@ -70,14 +73,12 @@ class PickupTaskSequencer(TaskSequencer):
         # 4. Move to approach pose (above grasp position)
         # Apply Z offset to approach pose in telemetry
         self._apply_z_offset_to_telemetry_pose(
-            context, 'generated_approach_pose', z_offset)
+            context, 'generated_approach_pose', self.z_offset)
         states.append(MoveToState(
             context, pose_from_telemetry='generated_approach_pose'))
 
         # 5. Move to grasp pose (final grasping position)
         # Apply Z offset to grasp pose in telemetry
-        self._apply_z_offset_to_telemetry_pose(
-            context, 'generated_grasp_pose', z_offset)
         states.append(MoveToState(
             context, pose_from_telemetry='generated_grasp_pose'))
 
@@ -96,33 +97,42 @@ class PickupTaskSequencer(TaskSequencer):
     def _apply_z_offset_to_telemetry_pose(self, context: StateContext, pose_key: str, z_offset: float):
         """
         Apply Z offset to a pose stored in telemetry.
+        This lifts the position by z_offset meters in the Z direction.
 
         Args:
             context: State context containing telemetry
-            pose_key: Key for the pose in telemetry
-            z_offset: Z offset to apply in meters
+            pose_key: Key for the pose ('generated_approach_pose' or 'generated_grasp_pose')
+            z_offset: Z offset to apply in meters (e.g., 0.2 for 20cm lift)
         """
         try:
-            # Get the current pose from telemetry
-            current_pose = context.telemetry.get_pose(pose_key)
-            if current_pose is not None:
-                # Apply Z offset to the pose
-                modified_pose = current_pose.copy()
-                if len(modified_pose) >= 3:
-                    modified_pose[2] += z_offset  # Add Z offset
-
-                    # Store the modified pose back in telemetry
-                    context.telemetry.set_pose(pose_key, modified_pose)
-
-                    logger.info(f"Applied Z offset of {z_offset*1000:.0f}mm to {pose_key}: "
-                                f"original Z={current_pose[2]:.3f}, new Z={modified_pose[2]:.3f}")
-                else:
-                    logger.warning(
-                        f"Pose {pose_key} has insufficient elements for Z offset")
+            # Get the current pose from telemetry using the correct method
+            if pose_key == 'generated_grasp_pose':
+                current_pose = context.telemetry.get_generated_grasp_pose()
+            elif pose_key == 'generated_approach_pose':
+                current_pose = context.telemetry.get_generated_approach_pose()
             else:
-                logger.warning(f"Pose {pose_key} not found in telemetry")
+                logger.error(f"❌ Unknown pose key: {pose_key}")
+                return
+
+            if current_pose is not None and len(current_pose) >= 3:
+                # Apply Z offset to the pose
+                modified_pose = list(current_pose)  # Make a copy as a list
+                modified_pose[2] += z_offset  # Add Z offset to Z coordinate
+
+                # Store the modified pose back in telemetry using the correct setter
+                if pose_key == 'generated_grasp_pose':
+                    context.telemetry.set_generated_grasp_pose(modified_pose)
+                elif pose_key == 'generated_approach_pose':
+                    context.telemetry.set_generated_approach_pose(
+                        modified_pose)
+
+                logger.info(f"✅ Applied Z offset of {z_offset*1000:.0f}mm to {pose_key}: "
+                            f"original Z={current_pose[2]:.3f}m, new Z={modified_pose[2]:.3f}m")
+            else:
+                logger.warning(
+                    f"⚠️ Pose '{pose_key}' not found or has insufficient elements")
         except Exception as e:
-            logger.error(f"Failed to apply Z offset to {pose_key}: {e}")
+            logger.error(f"❌ Failed to apply Z offset to {pose_key}: {e}")
 
     def get_sequence_description(self) -> List[str]:
         """Get a human-readable description of the pickup sequence."""
