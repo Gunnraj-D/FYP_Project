@@ -4,7 +4,6 @@ Integrated Hand-Eye Calibration System for KUKA iiwa14 with RealSense Camera.
 This module provides a complete hand-eye calibration solution that integrates with
 the existing robot control and camera management systems.
 """
-from .calibration_validator import CalibrationValidator
 from .pose_generator import PoseGenerator
 from .calibration_config import CalibrationConfig
 from IO_handling.opc_client_factory import OPCClientFactory
@@ -47,7 +46,7 @@ class HandEyeCalibrator:
         self.kinematics_solver = None
         self.robot_client = None
         self.pose_generator = None
-        self.validator = CalibrationValidator(self.config)
+        # Validator removed - validation done inline
 
         # Calibration data
         self.calibration_data = {
@@ -116,7 +115,7 @@ class HandEyeCalibrator:
                     command_bus, telemetry, opc_config)
             else:
                 self.robot_client = OPCClient(
-                command_bus, telemetry, opc_config)
+                    command_bus, telemetry, opc_config)
 
             self.robot_client.start()
 
@@ -658,14 +657,19 @@ class HandEyeCalibrator:
         """Validate calibration quality."""
         logger.info("Validating calibration quality...")
 
-        validation_results = self.validator.validate_calibration_quality(
-            self.calibration_data['R_gripper2base'],
-            self.calibration_data['t_gripper2base'],
-            self.calibration_data['R_target2cam'],
-            self.calibration_data['t_target2cam'],
-            self.H_cam2tcp,
-            self.calibration_data['reprojection_errors']
-        )
+        # Simple inline validation
+        translation_magnitude = np.linalg.norm(self.H_cam2tcp[:3, 3])
+        rotation_det = np.linalg.det(self.H_cam2tcp[:3, :3])
+        mean_reproj_error = np.mean(
+            self.calibration_data['reprojection_errors'])
+
+        validation_results = {
+            'translation_magnitude': translation_magnitude,
+            'rotation_determinant': rotation_det,
+            'mean_reprojection_error': mean_reproj_error,
+            'num_poses': len(self.calibration_data['R_gripper2base']),
+            'passed': abs(rotation_det - 1.0) < 0.01 and 0.1 < translation_magnitude < 0.5
+        }
 
         return validation_results
 
@@ -681,22 +685,26 @@ class HandEyeCalibrator:
                 logger.info(
                     f"Hand-eye matrix saved to {self.config.hand_eye_matrix_file}")
 
-            # Generate and save report
-            report = self.validator.generate_calibration_report(
-                validation_results, self.H_cam2tcp, self.config.calibration_report_file
-            )
+            # Generate and save simple report
+            report_lines = [
+                "=" * 60,
+                "Hand-Eye Calibration Report",
+                "=" * 60,
+                f"Translation magnitude: {validation_results['translation_magnitude']:.4f} m",
+                f"Rotation determinant: {validation_results['rotation_determinant']:.6f}",
+                f"Mean reprojection error: {validation_results['mean_reprojection_error']:.4f} pixels",
+                f"Number of poses: {validation_results['num_poses']}",
+                f"Validation: {'PASSED' if validation_results['passed'] else 'FAILED'}",
+                "=" * 60,
+                f"\nHand-Eye Matrix:\n{self.H_cam2tcp}",
+                "=" * 60
+            ]
 
-            # Create validation plots
-            self.validator.create_validation_plots(
-                self.calibration_data['reprojection_errors'],
-                [np.linalg.norm(A @ self.H_cam2tcp - self.H_cam2tcp @ B, 'fro')
-                 for A, B in zip(
-                     [np.eye(4)
-                      for _ in self.calibration_data['R_gripper2base']],
-                     [np.eye(4) for _ in self.calibration_data['R_target2cam']]
-                )],
-                f"calibration_validation_plots.png"
-            )
+            with open(self.config.calibration_report_file, 'w') as f:
+                f.write('\n'.join(report_lines))
+
+            logger.info(
+                f"Calibration report saved to {self.config.calibration_report_file}")
 
             logger.info("Calibration report and data saved successfully")
 

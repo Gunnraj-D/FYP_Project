@@ -3,5 +3,5 @@ venv
 __pycache__
 tests
 test_data
-calibration
 calibration_captures
+old_calibration_folder

@@ -455,10 +455,13 @@ class OPCClient:
     async def _write_gripper_status(self, status: str):
         """Write gripper status with redundant write detection using batch operations."""
         if not self.connected or not self.client:
+            logger.warning(
+                f"Cannot write gripper status '{status}' - not connected")
             return
 
         # Check for redundant writes
         if self.config.skip_redundant_writes and self._last_gripper_status == status:
+            logger.debug(f"Skipping redundant gripper write: {status}")
             return  # Skip redundant write
 
         self._last_gripper_status = status
@@ -477,17 +480,19 @@ class OPCClient:
                 nodes_to_write.append(self.control_nodes['gripper_control'])
                 values_to_write.append(ua.Variant(
                     gripper_value, ua.VariantType.Boolean))
-            else:
-                logger.warning("Gripper control node not available")
 
-            # Perform batch write for gripper nodes
-            if nodes_to_write:
+                # Perform batch write for gripper nodes
                 await self.client.write_values(nodes_to_write, values_to_write)
-                logger.debug(
-                    f"Wrote gripper control: {gripper_value} (status: {status})")
+                logger.info(
+                    f"✅ Wrote gripper control: {status} → {gripper_value}")
+            else:
+                logger.error(
+                    "❌ Gripper control node not available in control_nodes!")
+                logger.error(
+                    f"Available control nodes: {list(self.control_nodes.keys())}")
 
         except Exception as e:
-            logger.error(f"Failed to write gripper status: {e}")
+            logger.error(f"Failed to write gripper status '{status}': {e}")
 
     async def _handle_emergency_stop(self, active: bool):
         """Handle emergency stop command."""

@@ -154,14 +154,15 @@ class PickupTaskSequencer(TaskSequencer):
         }
 
 
-def create_pickup_sequencer(state_machine: StateMachine, context: StateContext, z_offset: float = 0.08) -> PickupTaskSequencer:
+def create_pickup_sequencer(state_machine: StateMachine, context: StateContext, z_offset: float = 0.0) -> PickupTaskSequencer:
     """
     Factory function to create a pickup task sequencer.
 
     Args:
         state_machine: State machine to manage state transitions
         context: Shared state context
-        z_offset: Z-axis offset in meters to compensate for larger tools (default: 0.08m = 8cm)
+        z_offset: Z-axis offset in meters to compensate for larger tools (default: 0.0m = DISABLED)
+                  Set to 0.0 to use calibrated hand-eye matrix without artificial offsets
 
     Returns:
         Initialized PickupTaskSequencer with Z offset applied

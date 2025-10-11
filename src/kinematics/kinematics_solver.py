@@ -304,13 +304,52 @@ class InverseKinematicsSolver:
         except Exception as e:
             logger.debug(f"Could not seed IK with current joint state: {e}")
 
-        # Call PyBullet IK
+        # Prepare joint limits for PyBullet IK
+        # IMPORTANT: Must map limits to ALL joints in URDF, not just revolute joints
+        num_joints = p.getNumJoints(self.robot_id, physicsClientId=self.client)
+
+        joint_names = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7']
+        lower_limits = []
+        upper_limits = []
+        joint_ranges = []
+        rest_poses = []
+
+        # Build mapping of revolute joint index to KUKA joint name
+        revolute_to_kuka = {}
+        for idx, rev_idx in enumerate(self.revolute_joint_indices[:7]):
+            revolute_to_kuka[rev_idx] = joint_names[idx]
+
+        # Apply limits to ALL joints in the URDF
+        for joint_idx in range(num_joints):
+            if joint_idx in revolute_to_kuka:
+                # This is one of the 7 KUKA revolute joints - use actual limits
+                kuka_name = revolute_to_kuka[joint_idx]
+                limits = JOINT_LIMITS[kuka_name]
+                lower_limits.append(limits['min'])
+                upper_limits.append(limits['max'])
+                joint_ranges.append(limits['max'] - limits['min'])
+                # Use current joint state as rest pose
+                rest_idx = list(revolute_to_kuka.keys()).index(joint_idx)
+                rest_poses.append(
+                    initial_full[rest_idx] if rest_idx < len(initial_full) else 0.0)
+            else:
+                # Fixed or gripper joint - use very tight limits (effectively fixed)
+                lower_limits.append(-0.01)
+                upper_limits.append(0.01)
+                joint_ranges.append(0.02)
+                rest_poses.append(0.0)
+
+        # Call PyBullet IK with proper joint limits and rest poses
         try:
             sol = p.calculateInverseKinematics(
                 bodyUniqueId=self.robot_id,
                 endEffectorLinkIndex=self.end_effector_link_index,
                 targetPosition=target_position,
                 targetOrientation=quat,
+                lowerLimits=lower_limits,
+                upperLimits=upper_limits,
+                jointRanges=joint_ranges,
+                restPoses=rest_poses,
                 maxNumIterations=max_iterations,
                 residualThreshold=tolerance,
                 physicsClientId=self.client
