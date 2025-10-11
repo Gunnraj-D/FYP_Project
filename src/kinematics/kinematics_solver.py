@@ -147,10 +147,25 @@ class InverseKinematicsSolver:
 
             logger.info(
                 f"Loaded URDF: {urdf_path_str} with {len(self.revolute_joint_indices)} active revolute/prismatic joints")
+            logger.info(
+                f"Revolute joint indices: {self.revolute_joint_indices}")
+            logger.info(f"Revolute joint names: {self.revolute_joint_names}")
 
-            # Attempt to find end effector link index: assume last link by default
-            # You can override this by setting self.end_effector_link_index externally if needed
-            self.end_effector_link_index = self.num_joints - 1
+            # Attempt to find end effector link index by name (more robust than assuming last)
+            self.end_effector_link_index = self.num_joints - 1  # Default fallback
+            try:
+                for i in range(self.num_joints):
+                    info = p.getJointInfo(
+                        self.robot_id, i, physicsClientId=self.client)
+                    link_name = info[12].decode('utf-8')  # link name
+                    if link_name in ('tcp', 'tool0', 'ee_link', 'flange'):
+                        self.end_effector_link_index = i
+                        logger.info(
+                            f"Found end effector link '{link_name}' at index {i}")
+                        break
+            except Exception as e:
+                logger.debug(
+                    f"Could not find end effector by name, using default: {e}")
 
             # Compatibility fields
             self.active_links_mask = active_links_mask
@@ -257,7 +272,7 @@ class InverseKinematicsSolver:
         current_joint_angles: List[float],
         target_orientation: Optional[np.ndarray] = None,
         max_iterations: int = 100,
-        tolerance: float = 1e-4
+        tolerance: float = 1e-3  # Relaxed from 1e-4 to handle small residuals after clamping
     ) -> np.ndarray:
         """
         Compute IK for target position and optional orientation using PyBullet.
@@ -314,10 +329,35 @@ class InverseKinematicsSolver:
         joint_ranges = []
         rest_poses = []
 
-        # Build mapping of revolute joint index to KUKA joint name
+        # Build mapping of revolute joint index -> KUKA joint name robustly by name
+        # This handles URDF ordering differences correctly
         revolute_to_kuka = {}
-        for idx, rev_idx in enumerate(self.revolute_joint_indices[:7]):
-            revolute_to_kuka[rev_idx] = joint_names[idx]
+        kuka_name_order = ['joint_a1', 'joint_a2', 'joint_a3',
+                           'joint_a4', 'joint_a5', 'joint_a6', 'joint_a7']
+        kuka_to_Aname = {'joint_a1': 'A1', 'joint_a2': 'A2', 'joint_a3': 'A3', 'joint_a4': 'A4',
+                         'joint_a5': 'A5', 'joint_a6': 'A6', 'joint_a7': 'A7'}
+
+        # Match by actual joint name from URDF
+        for idx, rev_idx in enumerate(self.revolute_joint_indices):
+            name = self.revolute_joint_names[idx] if idx < len(
+                self.revolute_joint_names) else None
+            if name and name in kuka_name_order:
+                # Map actual PyBullet joint index -> logical 'A#' name
+                revolute_to_kuka[rev_idx] = kuka_to_Aname[name]
+                # Stop when we've found all seven
+                if len(revolute_to_kuka) == 7:
+                    break
+
+        # Fallback: if any of the expected KUKA joints were not found, fall back to first-7 mapping
+        if len(revolute_to_kuka) < 7:
+            logger.warning(
+                "Could not map all KUKA joint names by name; falling back to first-7 revolute joints.")
+            revolute_to_kuka = {}
+            for i, rev_idx in enumerate(self.revolute_joint_indices[:7]):
+                revolute_to_kuka[rev_idx] = joint_names[i]
+
+        # Log the mapping for debugging
+        logger.debug(f"Joint mapping: {revolute_to_kuka}")
 
         # Apply limits to ALL joints in the URDF
         for joint_idx in range(num_joints):
@@ -328,10 +368,19 @@ class InverseKinematicsSolver:
                 lower_limits.append(limits['min'])
                 upper_limits.append(limits['max'])
                 joint_ranges.append(limits['max'] - limits['min'])
-                # Use current joint state as rest pose
-                rest_idx = list(revolute_to_kuka.keys()).index(joint_idx)
-                rest_poses.append(
-                    initial_full[rest_idx] if rest_idx < len(initial_full) else 0.0)
+
+                # Rest pose: use the value from initial_full for the matching revolute joint index
+                # Find the revolute joint array index
+                try:
+                    rev_array_index = self.revolute_joint_indices.index(
+                        joint_idx)
+                except ValueError:
+                    rev_array_index = None
+
+                if rev_array_index is not None and rev_array_index < len(initial_full):
+                    rest_poses.append(float(initial_full[rev_array_index]))
+                else:
+                    rest_poses.append(0.0)
             else:
                 # Fixed or gripper joint - use very tight limits (effectively fixed)
                 lower_limits.append(-0.01)
@@ -339,7 +388,7 @@ class InverseKinematicsSolver:
                 joint_ranges.append(0.02)
                 rest_poses.append(0.0)
 
-        # Call PyBullet IK with proper joint limits and rest poses
+        # Call PyBullet IK with proper joint limits, rest poses, and damping
         try:
             sol = p.calculateInverseKinematics(
                 bodyUniqueId=self.robot_id,
@@ -352,6 +401,8 @@ class InverseKinematicsSolver:
                 restPoses=rest_poses,
                 maxNumIterations=max_iterations,
                 residualThreshold=tolerance,
+                # Damping for stability near singularities
+                jointDamping=[0.1] * num_joints,
                 physicsClientId=self.client
             )
         except Exception as e:
@@ -376,7 +427,13 @@ class InverseKinematicsSolver:
                     self.revolute_joint_indices)].tolist()
                 break
 
+        # Normalize angles into principal range to make validation more predictable
+        def wrap_to_pi(x):
+            """Wrap angle to [-pi, pi] range."""
+            return (x + np.pi) % (2 * np.pi) - np.pi
+
         solution_revolute = np.asarray(solution_revolute, dtype=float)
+        solution_revolute = wrap_to_pi(solution_revolute)
 
         # Return only the first 7 actuated joints (matching your robot)
         if len(solution_revolute) < 7:
@@ -411,7 +468,7 @@ class InverseKinematicsSolver:
         target_pose: List[float],
         current_joint_angles: List[float],
         max_iterations: int = 100,
-        tolerance: float = 1e-4
+        tolerance: float = 1e-3  # Relaxed from 1e-4 to handle small residuals after clamping
     ) -> np.ndarray:
         """
         target_pose expected as [x,y,z, rx, ry, rz] where rx,ry,rz are Euler 'xyz' angles (radians).

@@ -93,14 +93,15 @@ class GraspTransformer:
                 int(center_u_scaled), int(center_v_scaled), depth
             )
 
-            # Create grasp orientation in camera frame
-            # Simplified: top-down approach, yaw aligned with grasp angle
-            roll = 0.0
-            pitch = 0.0
-            yaw = np.clip(angle, -np.pi/2, np.pi/2)  # Limit to ±90°
+            # Create grasp orientation in camera frame with facing-down orientation
+            # Use compose_grasp_orientation to create proper R_down @ R_z rotation
+            grasp_orientation_matrix = self.compose_grasp_orientation(angle)
+            grasp_rpy_camera = R.from_matrix(
+                grasp_orientation_matrix).as_euler('xyz')
 
-            pose = [x, y, z, roll, pitch, yaw]
-            logger.debug(f"3D grasp pose (camera frame): {pose}")
+            pose = [x, y, z] + grasp_rpy_camera.tolist()
+            logger.debug(f"3D grasp pose (camera frame): pos={pose[:3]}, "
+                         f"ori(deg)=[{np.degrees(pose[3]):.1f}, {np.degrees(pose[4]):.1f}, {np.degrees(pose[5]):.1f}]")
 
             return pose
 

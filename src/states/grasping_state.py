@@ -26,7 +26,7 @@ class GraspingState(BaseState):
     5. Monitors grasp success
     """
 
-    def __init__(self, context: StateContext, auto_process: bool = False):
+    def __init__(self, context: StateContext, auto_process: bool = False, approach_z_offset: float = 0.05):
         super().__init__(context)
         self.ggcnn2_module: Optional[GGcnn2Module] = None
         self.grasp_attempts = 0
@@ -34,6 +34,9 @@ class GraspingState(BaseState):
         self.grasp_start_time = 0.0
         self.current_grasp_result = None
         self.state_start_time = 0.0
+
+        # Z offset for approach pose (how far above grasp to approach from)
+        self.approach_z_offset = approach_z_offset
 
         # Debug mode variables
         self.debug_mode = DEBUG_MODE
@@ -205,6 +208,26 @@ class GraspingState(BaseState):
 
             logger.info(
                 f"Grasp attempt {self.grasp_attempts}: Quality = {grasp_result['quality']:.3f}")
+
+            # Store grasp and approach poses in telemetry for pickup sequencer
+            if 'pose' in grasp_result:
+                grasp_pose_base = grasp_result['pose']  # [x, y, z, rx, ry, rz]
+
+                # Store grasp pose
+                self.context.telemetry.set_generated_grasp_pose(
+                    grasp_pose_base)
+                logger.info(f"✅ Stored grasp pose: pos={grasp_pose_base[:3]}, "
+                            f"ori(deg)=[{np.degrees(grasp_pose_base[3]):.1f}, "
+                            f"{np.degrees(grasp_pose_base[4]):.1f}, {np.degrees(grasp_pose_base[5]):.1f}]")
+
+                # Generate and store approach pose (same pose + Z offset)
+                approach_pose = list(grasp_pose_base)  # Copy
+                approach_pose[2] += self.approach_z_offset  # Add Z offset
+
+                self.context.telemetry.set_generated_approach_pose(
+                    approach_pose)
+                logger.info(f"✅ Stored approach pose: pos={approach_pose[:3]}, "
+                            f"Z offset={self.approach_z_offset*1000:.0f}mm above grasp")
 
             # The grasp command is automatically sent by GGCNN2 module
             # We just need to wait for execution
