@@ -205,7 +205,7 @@ GGCNN2_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
 
 # Model selection: 'ggcnn2', 'grconvnet', or 'both' (dual-model comparison)
 # Start with GGCNN2, switch to 'grconvnet' after validation
-GRASP_MODEL_TYPE = 'grconvnet'  # Fixed: using 300x300 input + proper preprocessing
+GRASP_MODEL_TYPE = 'grconvnet'
 
 # GR-ConvNet model path
 GRCONVNET_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
@@ -213,13 +213,12 @@ GRCONVNET_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
 
 # GR-ConvNet specific configuration
 GRCONVNET_CONFIG = {
-    # Use 300 for Jacquard-trained weights (repo README shows --input-size 300 for Jacquard)
+    # Keep 300 to preserve current pipeline (trained on 224)
     'input_size': 300,
     'input_channels': 4,            # RGB-D input (R, G, B, Depth) as trained
     'use_dropout': False,           # Disable for inference
     'dropout_prob': 0.0,
-    # Inpaint missing/zero depth values (recommended by GR-ConvNet)
-    'use_depth_inpainting': True,
+    'use_depth_inpainting': False,  # Enable if depth sparse (test first)
     'channel_size': 32,             # Base filter size (as trained)
 }
 
@@ -254,8 +253,7 @@ GRASP_DETECTION_CONFIG = {
     #
     # Set to 1.5708 for proper short-side antipodal grasping
     # 90° = π/2 (converts contact line to jaw axis)
-    # -90° (perpendicular to contact line, corrected sign)
-    'grasp_angle_offset_rad': -1.5708,
+    'grasp_angle_offset_rad': 1.5708,
     # Rotation composition order for grasp orientation
     # 'down_then_z': R_down @ R_z = align with object, then point down (default)
     # 'z_then_down': R_z @ R_down = point down, then rotate in local frame
@@ -277,6 +275,23 @@ GRASP_DETECTION_CONFIG = {
     #
     # Set to None to disable angle filtering (recommended for mixed shapes)
     # None = disabled (free rotation), or set value to restrict
+
+    # ============================================================================
+    # TEMPORAL FILTERING (NEW - For angle stability)
+    # ============================================================================
+    # Temporal filtering improves angle consistency by averaging predictions over time
+    # Recommended for static or slow-moving objects where camera noise causes angle jitter
+
+    'temporal_filter_enabled': True,      # Enable temporal filtering
+    # Number of frames to average (3-7 recommended)
+    'temporal_window_size': 5,
+    'temporal_filter_type': 'circular_mean',  # 'circular_mean', 'median', or 'ema'
+    # EMA smoothing factor (0.1-0.5, lower=smoother)
+    'temporal_ema_alpha': 0.3,
+
+    # Outlier rejection: If new angle differs by > threshold, reduce its weight
+    # Degrees (None to disable, 20-45 recommended)
+    'temporal_outlier_threshold_deg': 30,
     'topdown_angle_tolerance_rad': None,
     # Reference angle in radians (only used if tolerance is not None)
     'topdown_ref_angle': 0.0,

@@ -71,6 +71,26 @@ class GGcnn2Module:
         self.depth_sample_radius = int(
             GRASP_DETECTION_CONFIG.get('depth_sample_radius', 5))
 
+        # Temporal filtering for angle stability
+        self.temporal_filter_enabled = GRASP_DETECTION_CONFIG.get(
+            'temporal_filter_enabled', False)
+        self.temporal_window_size = GRASP_DETECTION_CONFIG.get(
+            'temporal_window_size', 5)
+        self.temporal_filter_type = GRASP_DETECTION_CONFIG.get(
+            'temporal_filter_type', 'circular_mean')
+        self.temporal_ema_alpha = GRASP_DETECTION_CONFIG.get(
+            'temporal_ema_alpha', 0.3)
+        self.temporal_outlier_threshold_deg = GRASP_DETECTION_CONFIG.get(
+            'temporal_outlier_threshold_deg', 30)
+
+        # Temporal buffer for angles (circular buffer)
+        self.angle_history = []
+        self.ema_angle = None  # For EMA filter
+
+        if self.temporal_filter_enabled:
+            logger.info(
+                f"✨ Temporal filtering enabled: {self.temporal_filter_type}, window={self.temporal_window_size}")
+
         # Model selection
         if GRASP_MODEL_TYPE == 'grconvnet':
             self.model = GRConvNet(
@@ -117,67 +137,62 @@ class GGcnn2Module:
             - GGCNN2: (1, 1, 300, 300) depth only
             - GR-ConvNet: (1, 4, 300, 300) RGB-D
         """
+        # Crop to square to avoid aspect ratio distortion
         h, w = depth_image.shape
+        min_dim = min(h, w)
+        start_h = (h - min_dim) // 2
+        start_w = (w - min_dim) // 2
+        depth = depth_image[start_h:start_h+min_dim, start_w:start_w+min_dim]
+
+        # Resize depth
+        depth = cv2.resize(depth, (self.resize_size, self.resize_size))
+
+        # Normalize depth (same for both models)
+        depth_normalized = np.clip(depth, 0.2, 1.2)      # meters
+        depth_normalized = (depth_normalized - 0.2) / (1.0)  # [0,1]
 
         if self.use_rgbd and color_image is not None:
-            # GR-ConvNet: CENTER-CROP to exact size (NO resize, matches repo behavior)
-            # Repo uses: left = (width - output_size) // 2
-            left = (w - self.resize_size) // 2
-            top = (h - self.resize_size) // 2
+            # GR-ConvNet: RGB-D preprocessing
+            # Crop and resize color to match depth
+            color = color_image[start_h:start_h +
+                                min_dim, start_w:start_w+min_dim]
+            color = cv2.resize(color, (self.resize_size, self.resize_size))
 
-            depth = depth_image[top:top+self.resize_size,
-                                left:left+self.resize_size].astype(np.float32)
-            color = color_image[top:top+self.resize_size,
-                                left:left+self.resize_size]
+            # Convert BGR to RGB
+            color_rgb = cv2.cvtColor(color, cv2.COLOR_BGR2RGB)
 
-            # Depth inpainting for missing/zero values (recommended by GR-ConvNet repo)
-            if GRCONVNET_CONFIG.get('use_depth_inpainting', False) and np.any(depth == 0):
-                scale = np.abs(depth).max() if np.abs(depth).max() > 0 else 1.0
-                depth_scaled = (depth / scale).astype(np.float32)
-                depth_padded = cv2.copyMakeBorder(
-                    depth_scaled, 1, 1, 1, 1, cv2.BORDER_DEFAULT)
-                mask = np.pad((depth == 0).astype(np.uint8), 1,
-                              mode='constant', constant_values=0)
-                depth_inpainted = cv2.inpaint(
-                    depth_padded, mask, 1, cv2.INPAINT_NS)
-                depth = depth_inpainted[1:-1, 1:-1] * scale
-                logger.debug(
-                    f"Depth inpainting applied (filled {np.sum(mask)} missing pixels)")
+            # GR-ConvNet RGB normalization (from image.py lines 53-59):
+            # 1. Scale to [0,1]
+            rgb_scaled = color_rgb.astype(np.float32) / 255.0
+            # 2. Zero-center by subtracting mean
+            rgb_normalized = rgb_scaled - rgb_scaled.mean()
 
-            # RGB preprocessing (from image.py normalise())
-            color_rgb = cv2.cvtColor(
-                color, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            rgb_normalized = color_rgb - color_rgb.mean()  # Per-image zero-center
+            # GR-ConvNet Depth normalization (from image.py lines 205-209):
+            # Mean-center and clip to [-1, 1]
+            depth_mean_centered = depth - depth.mean()
+            depth_normalized_grconvnet = np.clip(depth_mean_centered, -1, 1)
 
-            # Depth preprocessing (from DepthImage.normalise())
-            depth_normalized = depth - depth.mean()  # Mean-center
-            depth_normalized = np.clip(
-                depth_normalized, -1, 1)  # Clip to [-1, 1]
+            # Stack: [D, R, G, B] - 4 channels (GR-ConvNet convention!)
+            # IMPORTANT: GR-ConvNet expects DEPTH FIRST, then RGB
+            # Verified in camera_data.py lines 74-80: concatenate(depth, rgb)
+            rgbd = np.dstack(
+                [depth_normalized_grconvnet[:, :, None], rgb_normalized])
 
-            # Stack: [D, R, G, B] (depth first, verified in camera_data.py)
-            rgbd = np.dstack([depth_normalized[:, :, None], rgb_normalized])
+            # Convert to tensor: (H, W, 4) → (4, H, W) → (1, 4, H, W)
             rgbd_tensor = torch.from_numpy(rgbd).permute(
                 2, 0, 1).unsqueeze(0).float()
 
             logger.debug(f"Preprocessed RGB-D: {rgbd_tensor.shape}")
             logger.debug(
-                f"RGB: [{rgb_normalized.min():.3f}, {rgb_normalized.max():.3f}], Depth: [{depth_normalized.min():.3f}, {depth_normalized.max():.3f}]")
+                f"RGB channels: [{color_normalized.min():.3f}, {color_normalized.max():.3f}]")
+            logger.debug(
+                f"Depth channel (meters): [{depth_for_grconvnet.min():.3f}, {depth_for_grconvnet.max():.3f}]")
             return rgbd_tensor.to(self.device)
         else:
-            # GGCNN2: Crop to square then resize
-            min_dim = min(h, w)
-            start_h = (h - min_dim) // 2
-            start_w = (w - min_dim) // 2
-            depth = depth_image[start_h:start_h +
-                                min_dim, start_w:start_w+min_dim]
-            depth = cv2.resize(depth, (self.resize_size, self.resize_size))
-
-            # Normalize depth: [0.2, 1.2]m → [0, 1]
-            depth_normalized = np.clip(depth, 0.2, 1.2)
-            depth_normalized = (depth_normalized - 0.2) / 1.0
-
+            # GGCNN2: Depth-only preprocessing
             depth_tensor = torch.from_numpy(
                 depth_normalized).unsqueeze(0).unsqueeze(0).float()
+
             logger.debug(f"Preprocessed depth: {depth_tensor.shape}")
             return depth_tensor.to(self.device)
 
@@ -214,10 +229,9 @@ class GGcnn2Module:
 
             # Width decoding (model-specific)
             if GRASP_MODEL_TYPE == 'grconvnet':
-                # GR-ConvNet: Network outputs normalized width, scale by (input_size / 2)
-                # Original repo uses 150 for 300px input (300/2=150)
-                # Must match input resolution used during training
-                width_img = F.relu(width) * (self.resize_size / 2.0)
+                # GR-ConvNet: Network outputs normalized width, scale by 150 pixels
+                # From post_process.py line 16: width_img * 150.0
+                width_img = F.relu(width) * 150.0
             else:
                 # GGCNN2: Direct pixel width
                 width_img = F.relu(width)
@@ -243,7 +257,7 @@ class GGcnn2Module:
             jaw_axis_angle_deg = pred_angle_deg + angle_offset_deg
 
             logger.info(
-                f"📐 {GRASP_MODEL_TYPE.upper()} predicted angle: {pred_angle_deg:.1f}° (contact line / long axis)")
+                f"📐 GGCNN2 predicted angle: {pred_angle_deg:.1f}° (contact line / long axis)")
             if angle_offset_deg != 0.0:
                 logger.info(
                     f"🔄 Applying {angle_offset_deg:.1f}° offset → Jaw axis: {jaw_axis_angle_deg:.1f}°")
@@ -430,6 +444,126 @@ class GGcnn2Module:
     # ----------------------------
     # Postprocessing
     # ----------------------------
+    def _circular_angle_mean(self, angles: List[float]) -> float:
+        """
+        Compute circular mean of angles (handles wrap-around at -π/2 and π/2).
+
+        Args:
+            angles: List of angles in radians [-π/2, π/2]
+
+        Returns:
+            Mean angle in radians
+        """
+        if not angles:
+            return 0.0
+
+        # Convert to unit vectors and average
+        cos_sum = sum(np.cos(2 * a) for a in angles)
+        sin_sum = sum(np.sin(2 * a) for a in angles)
+
+        # Compute mean angle
+        mean_angle = 0.5 * np.arctan2(sin_sum, cos_sum)
+        return mean_angle
+
+    def _is_angle_outlier(self, new_angle: float, reference_angles: List[float], threshold_deg: float) -> bool:
+        """
+        Check if new angle is an outlier compared to reference angles.
+
+        Args:
+            new_angle: New angle in radians
+            reference_angles: List of reference angles in radians
+            threshold_deg: Threshold in degrees
+
+        Returns:
+            True if angle is an outlier
+        """
+        if not reference_angles or threshold_deg is None:
+            return False
+
+        # CRITICAL: Need at least 3 samples for robust outlier detection
+        # This prevents first-frame bias where an outlier anchors the filter
+        if len(reference_angles) < 3:
+            return False
+
+        # Compute circular mean of reference angles
+        ref_mean = self._circular_angle_mean(reference_angles)
+
+        # Compute angular distance (handling wrap-around)
+        diff = abs(new_angle - ref_mean)
+        # Handle periodicity: angles differ by π are the same (gripper symmetry)
+        diff = min(diff, np.pi - diff)
+
+        threshold_rad = np.deg2rad(threshold_deg)
+        return diff > threshold_rad
+
+    def _apply_temporal_filter(self, angle: float) -> float:
+        """
+        Apply temporal filtering to stabilize angle predictions.
+
+        Args:
+            angle: Raw angle prediction in radians
+
+        Returns:
+            Filtered angle in radians
+        """
+        if not self.temporal_filter_enabled:
+            return angle
+
+        # Check for outliers
+        if self.temporal_outlier_threshold_deg is not None and len(self.angle_history) > 0:
+            if self._is_angle_outlier(angle, self.angle_history, self.temporal_outlier_threshold_deg):
+                logger.debug(
+                    f"⚠️  Angle outlier detected: {np.degrees(angle):.1f}° (rejecting)")
+                # Return previous filtered value instead of outlier
+                if self.angle_history:
+                    return self.angle_history[-1]
+
+        # Apply selected filter type
+        if self.temporal_filter_type == 'ema':
+            # Exponential moving average
+            if self.ema_angle is None:
+                self.ema_angle = angle
+            else:
+                # Use circular interpolation for EMA
+                alpha = self.temporal_ema_alpha
+                # Convert to unit vectors
+                cos_new = np.cos(2 * angle)
+                sin_new = np.sin(2 * angle)
+                cos_ema = np.cos(2 * self.ema_angle)
+                sin_ema = np.sin(2 * self.ema_angle)
+
+                # Interpolate
+                cos_result = alpha * cos_new + (1 - alpha) * cos_ema
+                sin_result = alpha * sin_new + (1 - alpha) * sin_ema
+
+                self.ema_angle = 0.5 * np.arctan2(sin_result, cos_result)
+
+            filtered_angle = self.ema_angle
+
+        elif self.temporal_filter_type == 'median':
+            # Add to history
+            self.angle_history.append(angle)
+            if len(self.angle_history) > self.temporal_window_size:
+                self.angle_history.pop(0)
+
+            # Median filter (robust to outliers)
+            filtered_angle = float(np.median(self.angle_history))
+
+        else:  # 'circular_mean' (default)
+            # Add to history
+            self.angle_history.append(angle)
+            if len(self.angle_history) > self.temporal_window_size:
+                self.angle_history.pop(0)
+
+            # Circular mean (handles wrap-around)
+            filtered_angle = self._circular_angle_mean(self.angle_history)
+
+        logger.debug(
+            f"🔄 Temporal filter: raw={np.degrees(angle):.1f}° → filtered={np.degrees(filtered_angle):.1f}° "
+            f"(history size: {len(self.angle_history)})")
+
+        return filtered_angle
+
     # def postprocess(self, q_img, ang_img, width_img) -> Optional[Dict]:
     #     """
     #     Select grasp with max quality score.
@@ -754,6 +888,15 @@ class GGcnn2Module:
                 marker = "👑" if i == 0 else f" {i+1}."
                 logger.info(f"  {marker} Angle: {np.degrees(cand['angle']):6.1f}° | "
                             f"Quality: {cand['quality']:.3f} | Score: {cand['score']:.3f}")
+
+        # Apply temporal filtering to stabilize angle predictions
+        raw_angle = best['angle']
+        filtered_angle = self._apply_temporal_filter(raw_angle)
+
+        if self.temporal_filter_enabled:
+            logger.info(
+                f"📐 Angle: raw={np.degrees(raw_angle):.1f}° → filtered={np.degrees(filtered_angle):.1f}°")
+            best['angle'] = filtered_angle
 
         return best
 
