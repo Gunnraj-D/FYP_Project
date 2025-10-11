@@ -43,15 +43,15 @@ GRASP_DETECTION_CONFIG = {
 
     # Approach configuration
     'approach_height_offset': 0.050,    # Height offset for approach (meters)
-    'grasp_depth_offset': 0.010,        # Depth offset for grasp (meters)
+    # Depth offset for grasp (meters) - raised by 15mm to compensate
+    'grasp_depth_offset': 0.025,
     'vertical_approach': True,          # Use vertical approach angle
     'approach_angle': -90.0,            # Approach angle in degrees
     'frame_processing_interval': 0.5,   # Process frames every N seconds
 
     # Angle offset configuration
-    # NOTE: With PCA angle correction enabled, this is less critical
-    # but still applied as a final adjustment if needed
-    'grasp_angle_offset_rad': 1.5708,   # 90° offset (π/2) for GGCNN2
+    # Set to 0.0 - we add the 90° rotation manually in the execution pipeline
+    'grasp_angle_offset_rad': 0.0,      # No offset (rotation added manually)
     'compose_order': 'down_then_z',     # Rotation composition order
 
     # Depth sampling

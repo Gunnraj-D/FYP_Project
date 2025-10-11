@@ -151,18 +151,43 @@ class InverseKinematicsSolver:
                 f"Revolute joint indices: {self.revolute_joint_indices}")
             logger.info(f"Revolute joint names: {self.revolute_joint_names}")
 
-            # Attempt to find end effector link index by name (more robust than assuming last)
+            # Find end effector link index by name - MUST use 'tcp' for gripper tip!
+            # Priority order: tcp > ee_link > flange > tool0 (last resort)
             self.end_effector_link_index = self.num_joints - 1  # Default fallback
+            ee_found = False
+
+            # Try to find 'tcp' first (most important - actual gripper tip)
             try:
                 for i in range(self.num_joints):
                     info = p.getJointInfo(
                         self.robot_id, i, physicsClientId=self.client)
                     link_name = info[12].decode('utf-8')  # link name
-                    if link_name in ('tcp', 'tool0', 'ee_link', 'flange'):
+
+                    # Priority: tcp is most important (gripper tip)
+                    if link_name == 'tcp':
                         self.end_effector_link_index = i
                         logger.info(
-                            f"Found end effector link '{link_name}' at index {i}")
+                            f"✅ Found TCP (gripper tip) at link index {i}")
+                        ee_found = True
                         break
+                    elif not ee_found and link_name in ('ee_link', 'flange'):
+                        self.end_effector_link_index = i
+                        logger.info(
+                            f"Found end effector '{link_name}' at index {i}")
+                        ee_found = True
+
+                # Warn if only found tool0 (missing gripper extension!)
+                if not ee_found:
+                    for i in range(self.num_joints):
+                        info = p.getJointInfo(
+                            self.robot_id, i, physicsClientId=self.client)
+                        link_name = info[12].decode('utf-8')
+                        if link_name == 'tool0':
+                            self.end_effector_link_index = i
+                            logger.warning(
+                                f"⚠️ Using 'tool0' at index {i} - gripper extension NOT included in TCP!")
+                            break
+
             except Exception as e:
                 logger.debug(
                     f"Could not find end effector by name, using default: {e}")

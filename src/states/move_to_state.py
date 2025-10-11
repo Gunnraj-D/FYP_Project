@@ -20,6 +20,7 @@ class MoveToState(BaseState):
         self.pose_from_telemetry = pose_from_telemetry
         self.started_motion = False
         self.target_joint_angles = None  # computed on enter/first execute
+        self._log_counter = 0  # For reducing log frequency
 
     def enter(self):
         logger.info("Entering MOVE_TO state")
@@ -133,8 +134,12 @@ class MoveToState(BaseState):
         target_np = np.array(self.target_joint_angles)
 
         is_close = np.allclose(current_np, target_np, atol=1e-2)
-        logger.info(f"Current joints: {current_np}")
-        logger.info(f"Target joints: {target_np}")
-        logger.info(f"Are close: {is_close}")
+
+        # Log only every 50 cycles to reduce spam
+        self._log_counter += 1
+        if self._log_counter % 50 == 0 or is_close:
+            logger.info(f"Current joints: {current_np}")
+            logger.info(f"Target joints: {target_np}")
+            logger.info(f"Are close: {is_close}")
 
         return is_close

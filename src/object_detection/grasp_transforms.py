@@ -267,7 +267,7 @@ class GraspTransformer:
                 pose_meters[2] = 0.0
 
             logger.info(f"Final pose for IK: position={pose_meters[:3]}, "
-                        f"orientation={pose_meters[3:6]}")
+                        f"orientation(deg)=[{np.degrees(pose_meters[3]):.1f}, {np.degrees(pose_meters[4]):.1f}, {np.degrees(pose_meters[5]):.1f}]")
 
             # Solve IK
             joint_angles = self.kinematics_solver.solve_pose(

@@ -118,6 +118,18 @@ class UnifiedHandTrackingState(BaseState):
             # hand_position is now already in TCP frame (from hand detection module)
             hand_pos_tcp = np.array(hand_position)
 
+            # ========================================================================
+            # TEMPORARY HACK: Compensate for tool0 vs tcp calibration mismatch
+            # TODO: Remove after recalibrating hand-eye matrix with correct TCP
+            #
+            # Issue: Hand-eye calibration was done with tool0 (link 7) as TCP
+            #        Now using actual tcp (link 9) = 138mm lower
+            # Fix: Add 138mm Z offset to hand position in TCP frame
+            hand_pos_tcp[2] -= 0.138  # Subtract 138mm gripper extension offset
+            logger.debug(
+                f"⚠️ TEMP: Applied -138mm Z offset for calibration mismatch (hand Z: {hand_pos_tcp[2]:.3f}m)")
+            # ========================================================================
+
             # Dead zone is relative to TCP: hand should be at [0, 0, DISTANCE_TO_REMAIN_M] in TCP frame
             target_pos_tcp = np.array([0.0, 0.0, DISTANCE_TO_REMAIN_M])
 
@@ -184,6 +196,12 @@ class UnifiedHandTrackingState(BaseState):
             # hand_position is now already in TCP frame (from hand detection module)
             hand_pos_tcp = np.array(hand_position)
 
+            # ========================================================================
+            # TEMPORARY HACK: Compensate for tool0 vs tcp calibration mismatch
+            # TODO: Remove after recalibrating hand-eye matrix with correct TCP
+            hand_pos_tcp[2] -= 0.138  # Subtract 138mm gripper extension offset
+            # ========================================================================
+
             # Target in TCP frame: hand should be at [0, 0, DISTANCE_TO_REMAIN_M]
             target_pos_tcp = np.array([0.0, 0.0, DISTANCE_TO_REMAIN_M])
 
@@ -246,6 +264,12 @@ class UnifiedHandTrackingState(BaseState):
 
             # hand_position is now already in TCP frame (from hand detection module)
             hand_pos_tcp = np.array(hand_position)
+
+            # ========================================================================
+            # TEMPORARY HACK: Compensate for tool0 vs tcp calibration mismatch
+            # TODO: Remove after recalibrating hand-eye matrix with correct TCP
+            hand_pos_tcp[2] -= 0.138  # Subtract 138mm gripper extension offset
+            # ========================================================================
 
             # Get pickup height offset from telemetry
             pickup_height_offset = self.context.telemetry.get_pickup_height_offset()

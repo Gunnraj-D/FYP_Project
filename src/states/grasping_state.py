@@ -211,14 +211,46 @@ class GraspingState(BaseState):
 
             # Store grasp and approach poses in telemetry for pickup sequencer
             if 'pose' in grasp_result:
-                grasp_pose_base = grasp_result['pose']  # [x, y, z, rx, ry, rz]
+                # [x, y, z, rx, ry, rz] - make mutable copy
+                grasp_pose_base = list(grasp_result['pose'])
 
-                # Store grasp pose
+                # Apply depth offset to raise grasp position slightly (prevents gripper going too low)
+                from config import GRASP_DETECTION_CONFIG
+                depth_offset = GRASP_DETECTION_CONFIG.get(
+                    'grasp_depth_offset', 0.0)
+                if depth_offset != 0.0:
+                    original_z = grasp_pose_base[2]
+                    grasp_pose_base[2] += depth_offset
+                    logger.info(
+                        f"📏 Applied grasp depth offset: {depth_offset*1000:.1f}mm (Z: {original_z:.3f} → {grasp_pose_base[2]:.3f})")
+
+                # Add 90° rotation to gripper yaw (convert jaw axis to gripper mounting)
+                # This must be done to the POSE before storing, so MoveToState gets the rotated angle
+                original_yaw = grasp_pose_base[5]
+                grasp_pose_base[5] += np.pi / 2  # Add 90° to yaw
+                logger.info(
+                    f"🔄 Added 90° gripper rotation to pose: yaw {np.degrees(original_yaw):.1f}° → {np.degrees(grasp_pose_base[5]):.1f}°")
+
+                # Calculate and store grasp height (TCP Z position - assumes table at Z=0)
+                grasp_height = grasp_pose_base[2]  # Z coordinate in base frame
+                self.context.telemetry.update_grasp_height(grasp_height)
+
+                # Store grasp pose (WITH rotation and depth offset applied)
                 self.context.telemetry.set_generated_grasp_pose(
                     grasp_pose_base)
                 logger.info(f"✅ Stored grasp pose: pos={grasp_pose_base[:3]}, "
                             f"ori(deg)=[{np.degrees(grasp_pose_base[3]):.1f}, "
                             f"{np.degrees(grasp_pose_base[4]):.1f}, {np.degrees(grasp_pose_base[5]):.1f}]")
+
+                # Log object height above table
+                print(f"\n{'='*60}")
+                print(f"📊 OBJECT HEIGHT ESTIMATE")
+                print(f"{'='*60}")
+                print(
+                    f"TCP grasp height (Z): {grasp_height*1000:.1f}mm ({grasp_height:.3f}m)")
+                print(f"Table height: 0.000m (assumed)")
+                print(f"Object height above table: {grasp_height*1000:.1f}mm")
+                print(f"{'='*60}\n")
 
                 # Generate and store approach pose (same pose + Z offset)
                 approach_pose = list(grasp_pose_base)  # Copy
