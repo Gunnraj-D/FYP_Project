@@ -39,21 +39,6 @@ LOGGING_CONFIG = {
 # HAND TRACKING CONFIGURATION
 # ============================================================================
 
-# Hand location (temporary/testing)
-HAND_LOCATION_TEMP = {
-    'position': np.array([0.4, 0, 0.2]),  # meters in base frame
-    'approach_distance': 0.1,              # meters
-    'approach_direction': np.array([0, 0, -1])  # From above
-}
-
-# Hand tracking parameters (MediaPipe)
-HAND_TRACKING_CONFIG = {
-    'max_hands': 1,
-    'min_confidence': 0.5,
-    'palm_flatness_threshold': 0.15,
-    'palm_indices': [0, 1, 2, 5, 9, 13, 17]
-}
-
 # Hand stability parameters
 DISTANCE_TO_REMAIN_M = 0.25  # Distance to maintain from hand (meters)
 HAND_STABILITY_THRESHOLD = 0.02  # How stable the hand should be (meters)

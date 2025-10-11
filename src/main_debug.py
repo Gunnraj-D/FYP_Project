@@ -3,7 +3,7 @@ Debug version of the main integrated robot control system.
 Allows interactive selection and execution of individual states and task sequencers.
 """
 import warnings
-from config.config import (
+from config import (
     PRE_PICKUP_POSE,
     HANDOFF_APPROACH_POSE,
     ROBOT_ID,
@@ -320,7 +320,7 @@ class DebugSystemManager:
 
         states = {
             # Reasonable position in workspace
-            1: MoveToState(self.context, target_location=(0.3, 0.415, 0.6)),
+            1: MoveToState(self.context, target_location=(0.3, 0.415, 0.36)),
             # Updated second position
             2: MoveToState(self.context, target_location=tuple(PICKUP_LOCATION['position'])),
             3: GripperControlState(self.context, action='open'),
@@ -556,7 +556,7 @@ class DebugSystemManager:
 
     def _toggle_camera_mode(self):
         """Toggle between calibrated and simple camera transform modes."""
-        from config.config import CAMERA_TRANSFORM_MODE as current_mode
+        from config import CAMERA_TRANSFORM_MODE as current_mode
         new_mode = 'simple' if current_mode == 'calibrated' else 'calibrated'
 
         print(

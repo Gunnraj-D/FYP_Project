@@ -28,11 +28,3 @@ URDF_FILEPATH = SRC_DIR / "resources" / "robot_models" / \
 
 # Hand-eye matrix file
 HAND_EYE_MATRIX_FILE = "src/hand_eye_matrix.npy"
-
-# ============================================================================
-# RESOURCE DIRECTORIES
-# ============================================================================
-
-RESOURCES_DIR = SRC_DIR / "resources"
-ML_MODELS_DIR = RESOURCES_DIR / "ml_models"
-ROBOT_MODELS_DIR = RESOURCES_DIR / "robot_models"

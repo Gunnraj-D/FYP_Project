@@ -150,17 +150,6 @@ GRASP_EXECUTION_CONFIG = {
     'gripper_optimal_max_mm': 60.0,      # Optimal range maximum
 }
 
-# ============================================================================
-# TABLE REFERENCE
-# ============================================================================
-
-# Table reference depth model parameters
-TABLE_REF_UPDATE_ALPHA = 0.05         # Exponential moving average update rate
-# Tolerance for table surface detection (meters)
-TABLE_REF_TOLERANCE = 0.01
-TABLE_REF_INITIALIZATION_FRAMES = 5   # Number of frames for initialization
-TABLE_REF_MIN_DEPTH = 0.1             # Minimum valid depth (meters)
-TABLE_REF_MAX_DEPTH = 3.0             # Maximum valid depth (meters)
 
 # ============================================================================
 # OBJECT-SPECIFIC CONFIGURATION PROFILES (Optional)

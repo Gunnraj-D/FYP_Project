@@ -1,7 +1,7 @@
 """
-Main configuration file for robot hand tracking system.
+Main configuration package for robot hand tracking system.
 
-This file imports and re-exports all configuration from modular config files.
+This package imports and re-exports all configuration from modular config files.
 This allows for cleaner organization while maintaining backward compatibility.
 
 REFACTORED STRUCTURE:
@@ -12,10 +12,13 @@ REFACTORED STRUCTURE:
 - grasp_config.py   → Grasp detection (including advanced anti-tip features)
 - system_config.py  → Debug, logging, hand tracking
 
-USAGE (unchanged):
-    from config.config import GRASP_DETECTION_CONFIG, DEBUG_MODE, ...
+USAGE (New, cleaner syntax):
+    from config import GRASP_DETECTION_CONFIG, DEBUG_MODE, ROBOT_ID
 
-All imports work exactly as before - zero breaking changes!
+LEGACY USAGE (still works):
+    from config.config import GRASP_DETECTION_CONFIG  # But no longer needed!
+
+All imports work - zero breaking changes, but the new syntax is cleaner!
 """
 
 # ============================================================================
@@ -29,10 +32,7 @@ from config.paths import (
     GRCONVNET_MODEL_PATH,
     HANDMODEL_FILEPATH,
     URDF_FILEPATH,
-    HAND_EYE_MATRIX_FILE,
-    RESOURCES_DIR,
-    ML_MODELS_DIR,
-    ROBOT_MODELS_DIR
+    HAND_EYE_MATRIX_FILE
 )
 
 # OPC UA configuration
@@ -55,8 +55,6 @@ from config.robot_config import (
     ROBOT_ID,
     get_robot_name,
     get_robot_namespace,
-    BASE_ELEMENT,
-    ACTIVE_LINKS,
     JOINT_LIMITS,
     GRIPPER_CONFIG,
     PICKUP_LOCATION,
@@ -92,13 +90,7 @@ from config.grasp_config import (
     GRASP_MODEL_TYPE,
     GRCONVNET_CONFIG,
     GRASP_DETECTION_CONFIG,
-    GRASP_EXECUTION_CONFIG,
-    TABLE_REF_UPDATE_ALPHA,
-    TABLE_REF_TOLERANCE,
-    TABLE_REF_INITIALIZATION_FRAMES,
-    TABLE_REF_MIN_DEPTH,
-    TABLE_REF_MAX_DEPTH,
-    OBJECT_PROFILES
+    GRASP_EXECUTION_CONFIG
 )
 
 # System configuration
@@ -107,8 +99,6 @@ from config.system_config import (
     DEBUG_MODE,
     DEBUG_CONFIG,
     LOGGING_CONFIG,
-    HAND_LOCATION_TEMP,
-    HAND_TRACKING_CONFIG,
     DISTANCE_TO_REMAIN_M,
     HAND_STABILITY_THRESHOLD,
     HAND_STABILITY_TIME_THRESHOLD
@@ -126,9 +116,6 @@ __all__ = [
     'HANDMODEL_FILEPATH',
     'URDF_FILEPATH',
     'HAND_EYE_MATRIX_FILE',
-    'RESOURCES_DIR',
-    'ML_MODELS_DIR',
-    'ROBOT_MODELS_DIR',
 
     # OPC UA
     'OPC_SERVER_URL',
@@ -147,8 +134,6 @@ __all__ = [
     'ROBOT_ID',
     'get_robot_name',
     'get_robot_namespace',
-    'BASE_ELEMENT',
-    'ACTIVE_LINKS',
     'JOINT_LIMITS',
     'GRIPPER_CONFIG',
     'PICKUP_LOCATION',
@@ -181,20 +166,12 @@ __all__ = [
     'GRCONVNET_CONFIG',
     'GRASP_DETECTION_CONFIG',
     'GRASP_EXECUTION_CONFIG',
-    'TABLE_REF_UPDATE_ALPHA',
-    'TABLE_REF_TOLERANCE',
-    'TABLE_REF_INITIALIZATION_FRAMES',
-    'TABLE_REF_MIN_DEPTH',
-    'TABLE_REF_MAX_DEPTH',
-    'OBJECT_PROFILES',
 
     # System
     'LOOP_RATE_MS',
     'DEBUG_MODE',
     'DEBUG_CONFIG',
     'LOGGING_CONFIG',
-    'HAND_LOCATION_TEMP',
-    'HAND_TRACKING_CONFIG',
     'DISTANCE_TO_REMAIN_M',
     'HAND_STABILITY_THRESHOLD',
     'HAND_STABILITY_TIME_THRESHOLD',

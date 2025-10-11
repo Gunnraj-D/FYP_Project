@@ -28,22 +28,6 @@ def get_robot_namespace(robot_id: int = ROBOT_ID) -> int:
 # KINEMATIC CHAIN
 # ============================================================================
 
-# Kinematic chain configuration for KUKA iiwa14
-BASE_ELEMENT = ["base_link"]
-ACTIVE_LINKS = [
-    False,  # base_link - fixed
-    True,   # link_1 - joint 1 (revolute)
-    True,   # link_2 - joint 2 (revolute)
-    True,   # link_3 - joint 3 (revolute)
-    True,   # link_4 - joint 4 (revolute)
-    True,   # link_5 - joint 5 (revolute)
-    True,   # link_6 - joint 6 (revolute)
-    True,   # link_7 - joint 7 (revolute)
-    False,  # tool0 - fixed joint
-    False,  # robotiq_85_base_link - fixed joint
-    False   # tcp - fixed joint
-]
-
 # Joint limits for KUKA LBR iiwa 14 (in radians)
 JOINT_LIMITS = {
     'A1': {'min': -2.967, 'max': 2.967},    # ±170°
