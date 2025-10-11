@@ -92,11 +92,12 @@ cp src/object_detection/ggcnn2_module.py src/object_detection/ggcnn2_module_back
 **From GR-ConvNet repo/paper, document**:
 
 ```
-□ Input size used in training: ___ × ___ (likely 224 or 300)
-□ Depth normalization formula: ___
-□ Depth clipping range: [___m, ___m]
-□ Inpainting used?: Yes/No
-□ RGB channels used?: Yes/No (we'll use depth-only)
+  ✅ Input size used in training: 224 × 224 (we'll use 300)
+  ✅ Input channels: 4 (RGB-D: R, G, B, Depth)
+  □ RGB normalization formula: ___
+  □ Depth normalization formula: ___
+  □ Depth clipping range: [___m, ___m]
+  □ Inpainting used?: Yes/No
 ```
 
 **If different from GGCNN2**:
@@ -359,24 +360,34 @@ def preprocess(self, depth_image: np.ndarray) -> torch.Tensor:
     # Resize (SAME for both if using 300)
     depth = cv2.resize(depth, (self.resize_size, self.resize_size))
 
-    # Model-specific preprocessing
-    if GRASP_MODEL_TYPE == 'grconvnet':
-        # TODO: Apply GR-ConvNet training preprocessing from Task 1.3
-        # If GR-ConvNet used inpainting:
-        if GRCONVNET_CONFIG.get('use_depth_inpainting', False):
-            depth = self._inpaint_depth(depth)  # Implement if needed
+  # Model-specific preprocessing
+  if GRASP_MODEL_TYPE == 'grconvnet':
+      # GR-ConvNet uses RGB-D (4 channels)
+      # Need to get color image as well
+      # TODO: Get color frame from camera_manager
+      # color_image = ...  # Get from camera manager (H, W, 3) RGB
 
-        # Use SAME normalization as training (verify from Task 1.3)
-        # Default assumption: same as GGCNN2 unless documented otherwise
-        depth = np.clip(depth, 0.2, 1.2)
-        depth = (depth - 0.2) / 1.0
-    else:
-        # GGCNN2 normalization (current, proven)
-        depth = np.clip(depth, 0.2, 1.2)
-        depth = (depth - 0.2) / 1.0
+      # Normalize RGB channels (typically [0, 255] → [0, 1])
+      # rgb_normalized = color_image / 255.0
 
-    depth_tensor = torch.from_numpy(depth).unsqueeze(0).unsqueeze(0).float()
-    return depth_tensor.to(self.device)
+      # Normalize depth (same as GGCNN2)
+      depth_normalized = np.clip(depth, 0.2, 1.2)
+      depth_normalized = (depth_normalized - 0.2) / 1.0
+
+      # Stack into 4-channel tensor: [R, G, B, D]
+      # rgbd = np.dstack([rgb_normalized, depth_normalized[:,:,None]])
+      # rgbd_tensor = torch.from_numpy(rgbd).permute(2, 0, 1).unsqueeze(0).float()
+
+      # For now, use placeholder implementation
+      # return rgbd_tensor.to(self.device)
+      pass
+  else:
+      # GGCNN2 normalization (current, proven) - depth only
+      depth = np.clip(depth, 0.2, 1.2)
+      depth = (depth - 0.2) / 1.0
+
+  depth_tensor = torch.from_numpy(depth).unsqueeze(0).unsqueeze(0).float()
+  return depth_tensor.to(self.device)
 ```
 
 **Verification**:

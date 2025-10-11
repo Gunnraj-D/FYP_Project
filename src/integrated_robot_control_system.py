@@ -14,7 +14,7 @@ from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager, CameraConfig
 from IO_handling.opc_client_factory import OPCClientFactory, OPCConfig
 from hand_detection.hand_detection_module import HandTracker, HandTrackingConfig
-from object_detection.ggcnn2_module import GGcnn2Module
+from object_detection.grasp_detector_module import GGcnn2Module
 from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
 from states.state_machine import StateMachine
 from states.context import StateContext

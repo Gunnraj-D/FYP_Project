@@ -8,7 +8,7 @@ from typing import Optional
 
 from states.base_state import BaseState
 from states.context import StateContext
-from object_detection.ggcnn2_module import GGcnn2Module
+from object_detection.grasp_detector_module import GGcnn2Module
 from config.config import GGCNN2_MODEL_PATH, GRASP_EXECUTION_CONFIG, DEBUG_MODE, DEBUG_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class GraspingState(BaseState):
                 self._handle_debug_mode(color_frame, depth_frame)
             else:
                 # Normal execution - process every frame
-                self._process_frame(depth_frame)
+                self._process_frame(depth_frame, color_frame)
 
         except Exception as e:
             logger.error(f"Error in GraspingState execution: {e}")
@@ -179,7 +179,7 @@ class GraspingState(BaseState):
                 logger.info("Frame selected for processing!")
                 self.selected_frame = depth_frame
                 self.frame_selected = True
-                self._process_frame(depth_frame)
+                self._process_frame(depth_frame, color_frame)
             elif key == ord('q') or key == 27:  # 'q' or ESC to quit
                 logger.info("Debug mode quit requested")
                 cv2.destroyAllWindows()
@@ -188,11 +188,12 @@ class GraspingState(BaseState):
         except Exception as e:
             logger.error(f"Error in debug mode handling: {e}")
 
-    def _process_frame(self, depth_frame):
+    def _process_frame(self, depth_frame, color_frame=None):
         """Process a single frame for grasp detection."""
         try:
-            # Run GGCNN2 inference
-            grasp_result = self.ggcnn2_module.process_depth_frame(depth_frame)
+            # Run grasp detection (GGCNN2 or GR-ConvNet)
+            grasp_result = self.ggcnn2_module.process_depth_frame(
+                depth_frame, color_frame)
 
             if grasp_result is None:
                 logger.debug("No valid grasp found")

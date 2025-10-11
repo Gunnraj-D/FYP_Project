@@ -199,6 +199,33 @@ GRIPPER_CONFIG = {
 GGCNN2_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
     "ggcnn2_weights_cornell" / "epoch_50_cornell_statedict.pt"
 
+# ============================================================================
+# GR-CONVNET CONFIGURATION
+# ============================================================================
+
+# Model selection: 'ggcnn2', 'grconvnet', or 'both' (dual-model comparison)
+# Start with GGCNN2, switch to 'grconvnet' after validation
+GRASP_MODEL_TYPE = 'grconvnet'  # Fixed: using 300x300 input + proper preprocessing
+
+# GR-ConvNet model path
+GRCONVNET_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
+    "grconvnet_weights" / "grconvnet_cornell.pt"
+
+# GR-ConvNet specific configuration
+GRCONVNET_CONFIG = {
+    # Use 300 for Jacquard-trained weights (repo README shows --input-size 300 for Jacquard)
+    'input_size': 300,
+    'input_channels': 4,            # RGB-D input (R, G, B, Depth) as trained
+    'use_dropout': False,           # Disable for inference
+    'dropout_prob': 0.0,
+    # Inpaint missing/zero depth values (recommended by GR-ConvNet)
+    'use_depth_inpainting': True,
+    'channel_size': 32,             # Base filter size (as trained)
+}
+
+# Note: GRASP_DETECTION_CONFIG applies to BOTH models
+# grasp_angle_offset_rad will be re-validated for GR-ConvNet
+
 # Grasp detection parameters
 GRASP_DETECTION_CONFIG = {
     # Minimum grasp quality to accept
@@ -227,7 +254,8 @@ GRASP_DETECTION_CONFIG = {
     #
     # Set to 1.5708 for proper short-side antipodal grasping
     # 90° = π/2 (converts contact line to jaw axis)
-    'grasp_angle_offset_rad': 1.5708,
+    # -90° (perpendicular to contact line, corrected sign)
+    'grasp_angle_offset_rad': -1.5708,
     # Rotation composition order for grasp orientation
     # 'down_then_z': R_down @ R_z = align with object, then point down (default)
     # 'z_then_down': R_z @ R_down = point down, then rotate in local frame

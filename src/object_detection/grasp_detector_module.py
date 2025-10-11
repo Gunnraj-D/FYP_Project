@@ -1,3 +1,10 @@
+"""
+Grasp Detector Module - Unified wrapper for grasp synthesis networks.
+
+Supports both GGCNN2 (depth-only) and GR-ConvNet (RGB-D) models.
+Model selection via GRASP_MODEL_TYPE config parameter.
+"""
+
 import random
 import math
 import torch
@@ -16,22 +23,32 @@ from camera_management.camera_transform_module import transform_camera_to_base
 from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
 from kinematics.kinematics_solver import get_facing_down_orientation
 from object_detection.ggcnn2 import GGCNN2
-from config.config import GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE, DEBUG_CONFIG
+from object_detection.grconvnet import GRConvNet
+from config.config import (
+    GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE, DEBUG_CONFIG,
+    GRASP_MODEL_TYPE, GRCONVNET_CONFIG, GGCNN2_MODEL_PATH, GRCONVNET_MODEL_PATH
+)
 
 logger = logging.getLogger(__name__)
 
 
 class GGcnn2Module:
     """
-    Wrapper around the GGCNN2 grasp synthesis network.
+    Unified wrapper for grasp synthesis networks (GGCNN2 or GR-ConvNet).
+
+    Supports:
+    - GGCNN2: Depth-only single-channel input
+    - GR-ConvNet: RGB-D four-channel input
 
     Responsibilities:
-    - Preprocess depth images
-    - Run inference on GGCNN2
+    - Preprocess depth (and color for GR-ConvNet) images
+    - Run inference on selected model
     - Postprocess outputs into grasp parameters (center, angle, width)
     - Transform grasp pose from camera to robot base frame
     - Convert grasp pose to joint angles using inverse kinematics
     - Store results in shared telemetry
+
+    Model selection via GRASP_MODEL_TYPE config parameter.
     """
 
     def __init__(self, model_path: str, telemetry: Telemetry, command_bus: CommandBus,
@@ -44,76 +61,166 @@ class GGcnn2Module:
             "cuda" if torch.cuda.is_available() else "cpu")
 
         # Configuration parameters
-        self.resize_size = 300  # Standard GGCNN2 input size
+        if GRASP_MODEL_TYPE == 'grconvnet':
+            self.resize_size = GRCONVNET_CONFIG.get('input_size', 300)
+            self.use_rgbd = True  # GR-ConvNet uses RGB-D
+        else:
+            self.resize_size = 300  # GGCNN2 standard
+            self.use_rgbd = False  # GGCNN2 uses depth-only
+
         self.depth_sample_radius = int(
             GRASP_DETECTION_CONFIG.get('depth_sample_radius', 5))
 
-        # Init model
-        self.model = GGCNN2()
-        state_dict = torch.load(model_path, map_location=self.device)
+        # Model selection
+        if GRASP_MODEL_TYPE == 'grconvnet':
+            self.model = GRConvNet(
+                input_channels=GRCONVNET_CONFIG.get('input_channels', 4),
+                channel_size=GRCONVNET_CONFIG.get('channel_size', 32),
+                input_size=self.resize_size,
+                dropout=GRCONVNET_CONFIG.get('use_dropout', False),
+                dropout_prob=GRCONVNET_CONFIG.get('dropout_prob', 0.0)
+            )
+            model_path = str(GRCONVNET_MODEL_PATH)
+            logger.info("🔄 Using GR-ConvNet model (RGB-D) for grasp detection")
+        else:
+            self.model = GGCNN2()
+            model_path = str(
+                GGCNN2_MODEL_PATH) if model_path is None else model_path
+            logger.info("Using GGCNN2 model (depth-only) for grasp detection")
+
+        # Load weights
+        state_dict = torch.load(
+            model_path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(state_dict)
         self.model.to(self.device).eval()
 
-        logger.info(f"GGCNN2 model loaded from {model_path} on {self.device}")
+        logger.info(f"Model loaded from {model_path} on {self.device}")
         logger.info(
-            f"Depth sample radius: {self.depth_sample_radius}, resize: {self.resize_size}x{self.resize_size}")
+            f"Model type: {GRASP_MODEL_TYPE.upper()}, "
+            f"Input: {'RGB-D (4ch)' if self.use_rgbd else 'Depth (1ch)'}, "
+            f"Size: {self.resize_size}x{self.resize_size}, "
+            f"Depth sample radius: {self.depth_sample_radius}")
 
     # ----------------------------
     # Preprocessing
     # ----------------------------
-    def preprocess(self, depth_image: np.ndarray) -> torch.Tensor:
+    def preprocess(self, depth_image: np.ndarray, color_image: Optional[np.ndarray] = None) -> torch.Tensor:
         """
-        Preprocess depth image for GGCNN2 inference.
+        Preprocess depth (and color for GR-ConvNet) for network inference.
 
         Args:
-            depth_image: Depth image in meters
+            depth_image: Depth image in meters (H, W)
+            color_image: Color image in BGR format (H, W, 3) - required for GR-ConvNet
 
         Returns:
-            Preprocessed depth tensor normalized to [0,1]
+            Preprocessed tensor:
+            - GGCNN2: (1, 1, 300, 300) depth only
+            - GR-ConvNet: (1, 4, 300, 300) RGB-D
         """
-        # Crop to square to avoid aspect ratio distortion
         h, w = depth_image.shape
-        min_dim = min(h, w)
-        start_h = (h - min_dim) // 2
-        start_w = (w - min_dim) // 2
-        depth = depth_image[start_h:start_h+min_dim, start_w:start_w+min_dim]
 
-        depth = cv2.resize(depth, (300, 300))
+        if self.use_rgbd and color_image is not None:
+            # GR-ConvNet: CENTER-CROP to exact size (NO resize, matches repo behavior)
+            # Repo uses: left = (width - output_size) // 2
+            left = (w - self.resize_size) // 2
+            top = (h - self.resize_size) // 2
 
-        # Fixed normalization range for tabletop scenarios
-        # All units in METERS (0.2m to 1.2m typical for tabletop grasping)
-        depth = np.clip(depth, 0.2, 1.2)      # meters
-        depth = (depth - 0.2) / (1.0)         # normalize [0,1]
+            depth = depth_image[top:top+self.resize_size,
+                                left:left+self.resize_size].astype(np.float32)
+            color = color_image[top:top+self.resize_size,
+                                left:left+self.resize_size]
 
-        depth_tensor = torch.from_numpy(
-            depth).unsqueeze(0).unsqueeze(0).float()
-        return depth_tensor.to(self.device)
+            # Depth inpainting for missing/zero values (recommended by GR-ConvNet repo)
+            if GRCONVNET_CONFIG.get('use_depth_inpainting', False) and np.any(depth == 0):
+                scale = np.abs(depth).max() if np.abs(depth).max() > 0 else 1.0
+                depth_scaled = (depth / scale).astype(np.float32)
+                depth_padded = cv2.copyMakeBorder(
+                    depth_scaled, 1, 1, 1, 1, cv2.BORDER_DEFAULT)
+                mask = np.pad((depth == 0).astype(np.uint8), 1,
+                              mode='constant', constant_values=0)
+                depth_inpainted = cv2.inpaint(
+                    depth_padded, mask, 1, cv2.INPAINT_NS)
+                depth = depth_inpainted[1:-1, 1:-1] * scale
+                logger.debug(
+                    f"Depth inpainting applied (filled {np.sum(mask)} missing pixels)")
+
+            # RGB preprocessing (from image.py normalise())
+            color_rgb = cv2.cvtColor(
+                color, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            rgb_normalized = color_rgb - color_rgb.mean()  # Per-image zero-center
+
+            # Depth preprocessing (from DepthImage.normalise())
+            depth_normalized = depth - depth.mean()  # Mean-center
+            depth_normalized = np.clip(
+                depth_normalized, -1, 1)  # Clip to [-1, 1]
+
+            # Stack: [D, R, G, B] (depth first, verified in camera_data.py)
+            rgbd = np.dstack([depth_normalized[:, :, None], rgb_normalized])
+            rgbd_tensor = torch.from_numpy(rgbd).permute(
+                2, 0, 1).unsqueeze(0).float()
+
+            logger.debug(f"Preprocessed RGB-D: {rgbd_tensor.shape}")
+            logger.debug(
+                f"RGB: [{rgb_normalized.min():.3f}, {rgb_normalized.max():.3f}], Depth: [{depth_normalized.min():.3f}, {depth_normalized.max():.3f}]")
+            return rgbd_tensor.to(self.device)
+        else:
+            # GGCNN2: Crop to square then resize
+            min_dim = min(h, w)
+            start_h = (h - min_dim) // 2
+            start_w = (w - min_dim) // 2
+            depth = depth_image[start_h:start_h +
+                                min_dim, start_w:start_w+min_dim]
+            depth = cv2.resize(depth, (self.resize_size, self.resize_size))
+
+            # Normalize depth: [0.2, 1.2]m → [0, 1]
+            depth_normalized = np.clip(depth, 0.2, 1.2)
+            depth_normalized = (depth_normalized - 0.2) / 1.0
+
+            depth_tensor = torch.from_numpy(
+                depth_normalized).unsqueeze(0).unsqueeze(0).float()
+            logger.debug(f"Preprocessed depth: {depth_tensor.shape}")
+            return depth_tensor.to(self.device)
 
     # ----------------------------
     # Inference
     # ----------------------------
 
-    def infer(self, depth_image: np.ndarray, original_depth_frame=None) -> Optional[Dict]:
+    def infer(self, depth_image: np.ndarray, original_depth_frame=None, color_image: Optional[np.ndarray] = None) -> Optional[Dict]:
         """
-        Run GG-CNN2 on a depth image and return best grasp candidate with joint angles.
+        Run grasp network (GGCNN2 or GR-ConvNet) and return best grasp candidate with joint angles.
+
+        Args:
+            depth_image: Depth image in meters (H, W)
+            original_depth_frame: Optional RealSense depth frame for sampling
+            color_image: Color image in BGR format (H, W, 3) - required for GR-ConvNet
 
         Returns:
             Dict containing grasp parameters and joint angles, or None if no valid grasp found
         """
         try:
             # Visualize input frame if debug mode is enabled
-            self._visualize_input_frame(depth_image, "GG-CNN2 Input Frame")
+            vis_title = f"{GRASP_MODEL_TYPE.upper()} Input Frame"
+            self._visualize_input_frame(depth_image, vis_title)
 
-            depth_tensor = self.preprocess(depth_image)
+            # Preprocess (handles both depth-only and RGB-D)
+            input_tensor = self.preprocess(depth_image, color_image)
 
             with torch.no_grad():
-                pos, cos, sin, width = self.model(depth_tensor)
+                pos, cos, sin, width = self.model(input_tensor)
 
             # Decode outputs
             q_img = torch.sigmoid(pos)                 # grasp quality
             ang_img = 0.5 * torch.atan2(sin, cos)      # angle [-pi/2, pi/2]
-            # enforce non-negative width
-            width_img = F.relu(width)
+
+            # Width decoding (model-specific)
+            if GRASP_MODEL_TYPE == 'grconvnet':
+                # GR-ConvNet: Network outputs normalized width, scale by (input_size / 2)
+                # Original repo uses 150 for 300px input (300/2=150)
+                # Must match input resolution used during training
+                width_img = F.relu(width) * (self.resize_size / 2.0)
+            else:
+                # GGCNN2: Direct pixel width
+                width_img = F.relu(width)
 
             # Pick best grasp
             grasp_2d = self.postprocess(
@@ -136,7 +243,7 @@ class GGcnn2Module:
             jaw_axis_angle_deg = pred_angle_deg + angle_offset_deg
 
             logger.info(
-                f"📐 GGCNN2 predicted angle: {pred_angle_deg:.1f}° (contact line / long axis)")
+                f"📐 {GRASP_MODEL_TYPE.upper()} predicted angle: {pred_angle_deg:.1f}° (contact line / long axis)")
             if angle_offset_deg != 0.0:
                 logger.info(
                     f"🔄 Applying {angle_offset_deg:.1f}° offset → Jaw axis: {jaw_axis_angle_deg:.1f}°")
@@ -987,12 +1094,13 @@ class GGcnn2Module:
     # ----------------------------
     # Convenience Methods
     # ----------------------------
-    def process_depth_frame(self, depth_frame) -> Optional[Dict]:
+    def process_depth_frame(self, depth_frame, color_frame=None) -> Optional[Dict]:
         """
-        Convenience method to process a depth frame from camera manager.
+        Convenience method to process depth (and color) frames from camera manager.
 
         Args:
             depth_frame: Depth frame from camera manager
+            color_frame: Color frame from camera manager (required for GR-ConvNet)
 
         Returns:
             Grasp result dict or None
@@ -1017,10 +1125,25 @@ class GGcnn2Module:
                 # Assume already a numpy array in meters
                 depth_array = depth_frame
 
-            return self.infer(depth_array, depth_frame)
+            # Get color image if GR-ConvNet is being used
+            color_array = None
+            if self.use_rgbd and color_frame is not None:
+                if hasattr(color_frame, 'get_data'):
+                    # RealSense color frame
+                    color_array = np.asanyarray(color_frame.get_data())
+                    logger.debug(f"Got color frame: {color_array.shape} (BGR)")
+                else:
+                    # Already a numpy array
+                    color_array = color_frame
+
+                if color_array is None:
+                    logger.warning(
+                        "GR-ConvNet requires color frame but none provided, using depth-only fallback")
+
+            return self.infer(depth_array, depth_frame, color_array)
 
         except Exception as e:
-            logger.error(f"Failed to process depth frame: {e}")
+            logger.error(f"Failed to process frames: {e}")
             return None
 
     def cleanup(self):
