@@ -56,7 +56,8 @@ TUNING PARAMETERS:
 """
 
 
-
+from camera_management.camera_manager import CameraManager
+from object_detection.grconvnet import GRConvNet
 import sys
 import os
 import torch
@@ -71,8 +72,6 @@ from typing import List, Tuple, Dict, Optional
 src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src')
 sys.path.insert(0, src_path)
 
-from object_detection.grconvnet import GRConvNet
-from camera_management.camera_manager import CameraManager
 
 # Robotiq 2F-85 Gripper Specifications
 

@@ -129,7 +129,7 @@ __all__ = [
     'RESOURCES_DIR',
     'ML_MODELS_DIR',
     'ROBOT_MODELS_DIR',
-
+    
     # OPC UA
     'OPC_SERVER_URL',
     'OPC_OBJECTS_NAME',
@@ -142,7 +142,7 @@ __all__ = [
     'OPC_MAX_RECONNECT_ATTEMPTS',
     'OPC_MODE',
     'OPC_MOCK_SERVER_URL',
-
+    
     # Robot
     'ROBOT_ID',
     'get_robot_name',
@@ -164,7 +164,7 @@ __all__ = [
     'PATH_PLANNING_CONFIG',
     'HUMAN_MODEL_CONFIG',
     'TRACKED_HUMAN_JOINTS',
-
+    
     # Camera
     'CAMERA_TRANSLATION',
     'CAMERA_ROTATION_EULER',
@@ -175,7 +175,7 @@ __all__ = [
     'set_camera_transform_mode',
     'get_camera_transform_info',
     'print_camera_transform_info',
-
+    
     # Grasp detection
     'GRASP_MODEL_TYPE',
     'GRCONVNET_CONFIG',
@@ -187,7 +187,7 @@ __all__ = [
     'TABLE_REF_MIN_DEPTH',
     'TABLE_REF_MAX_DEPTH',
     'OBJECT_PROFILES',
-
+    
     # System
     'LOOP_RATE_MS',
     'DEBUG_MODE',
@@ -201,9 +201,8 @@ __all__ = [
 ]
 
 # ============================================================================
-# CONVENIENCE FUNCTION
+# CONVENIENCE INFO FUNCTION
 # ============================================================================
-
 
 def print_config_summary():
     """Print a summary of the current configuration."""
@@ -215,45 +214,39 @@ def print_config_summary():
     print(f"🎯 Grasp Model: {GRASP_MODEL_TYPE.upper()}")
     print(f"📷 Camera Mode: {CAMERA_TRANSFORM_MODE}")
     print(f"🐛 Debug Mode: {DEBUG_MODE}")
-    print(
-        f"✨ Advanced Postprocessing: {GRASP_DETECTION_CONFIG['use_advanced_postprocessing']}")
+    print(f"✨ Advanced Postprocessing: {GRASP_DETECTION_CONFIG['use_advanced_postprocessing']}")
     if GRASP_DETECTION_CONFIG['use_advanced_postprocessing']:
-        print(
-            f"   - Width multiplier: {GRASP_DETECTION_CONFIG['width_multiplier']}")
+        print(f"   - Width multiplier: {GRASP_DETECTION_CONFIG['width_multiplier']}")
         print(f"   - Min overlap: {GRASP_DETECTION_CONFIG['min_overlap']}")
-        print(
-            f"   - PCA angle correction: {GRASP_DETECTION_CONFIG['use_pca_angle_correction']}")
-        print(
-            f"   - NMS dilate size: {GRASP_DETECTION_CONFIG['nms_dilate_size']}")
+        print(f"   - PCA angle correction: {GRASP_DETECTION_CONFIG['use_pca_angle_correction']}")
+        print(f"   - NMS dilate size: {GRASP_DETECTION_CONFIG['nms_dilate_size']}")
     print("="*70 + "\n")
 
 
 # ============================================================================
-# MIGRATION NOTE
+# NOTE: CONFIGURATION ORGANIZATION
 # ============================================================================
+# 
+# This config is now modular! Each section lives in its own file:
 #
-# The configuration has been refactored into multiple files for better
-# organization and maintainability. All imports remain backward compatible.
+#   📁 config/
+#   ├── paths.py          - File paths and directories
+#   ├── opc_config.py     - OPC UA communication
+#   ├── robot_config.py   - Robot, kinematics, safety, planning
+#   ├── camera_config.py  - Camera and hand-eye calibration
+#   ├── grasp_config.py   - Grasp detection (ADVANCED anti-tip features)
+#   ├── system_config.py  - Debug, logging, hand tracking
+#   └── config.py         - This file (imports and re-exports all)
 #
-# To edit a setting:
-# 1. Identify which module it belongs to (paths, opc, robot, camera, grasp, system)
-# 2. Edit the appropriate config file
-# 3. Your imports will automatically get the updated value
+# To modify settings:
+# 1. Find the relevant config file above
+# 2. Edit the specific parameter
+# 3. Import still works: from config.config import GRASP_DETECTION_CONFIG
 #
-# Example: To change grasp detection settings, edit grasp_config.py
-#
-# Old (single file):
-#   - config.py (628 lines)  ❌ Hard to navigate
-#
-# New (modular):
-#   - paths.py (~30 lines)           ✅ File paths
-#   - opc_config.py (~30 lines)      ✅ OPC UA settings
-#   - robot_config.py (~130 lines)   ✅ Robot & planning
-#   - camera_config.py (~95 lines)   ✅ Camera & calibration
-#   - grasp_config.py (~115 lines)   ✅ Grasp detection
-#   - system_config.py (~40 lines)   ✅ Debug & logging
-#   - config.py (~180 lines)         ✅ Main re-export
-#
-# Total: Same content, much better organization!
-#
+# Benefits:
+# - ✅ Cleaner organization (logical grouping)
+# - ✅ Easier to find settings (smaller files)
+# - ✅ Better maintainability (separated concerns)
+# - ✅ 100% backward compatible (same imports work)
+# 
 # ============================================================================
