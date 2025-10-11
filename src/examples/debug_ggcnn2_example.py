@@ -15,7 +15,7 @@ Make sure to set DEBUG_MODE = True in config.py before running.
 """
 
 from config.config import DEBUG_MODE, DEBUG_CONFIG, URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS, PRE_PICKUP_POSE
-from object_detection.grasp_detector_module import GGcnn2Module
+from object_detection.grasp_detector import GraspDetector as GGcnn2Module
 from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager

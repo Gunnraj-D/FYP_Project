@@ -4,6 +4,8 @@ Shows quality, angle, and width maps side-by-side.
 """
 
 
+from object_detection.grconvnet import GRConvNet
+from camera_management.camera_manager import CameraManager
 import sys
 import os
 import torch
@@ -14,9 +16,6 @@ import matplotlib.pyplot as plt
 
 src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src')
 sys.path.insert(0, src_path)
-
-from camera_management.camera_manager import CameraManager
-from object_detection.grconvnet import GRConvNet
 
 
 # Initialize camera
@@ -70,7 +69,7 @@ print(f"   Channel order: [D, R, G, B]")
 
 # Load model
 model = GRConvNet(input_channels=4, channel_size=32, input_size=300)
-state_dict = torch.load("src/resources/ml_models/grconvnet_weights/grconvnet_cornell.pt",
+state_dict = torch.load("src/resources/ml_models/grconvnet_weights/grconvnet_jacquard.pt",
                         map_location='cpu', weights_only=True)
 model.load_state_dict(state_dict)
 model.eval()

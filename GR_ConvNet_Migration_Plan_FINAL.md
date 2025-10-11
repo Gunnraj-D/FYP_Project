@@ -211,7 +211,7 @@ GRASP_MODEL_TYPE = 'ggcnn2'  # ← Start with GGCNN2, switch after validation
 
 # GR-ConvNet model path
 GRCONVNET_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
-    "grconvnet_weights" / "grconvnet_cornell.pt"
+    "grconvnet_weights" / "grconvnet_jacquard.pt"
 
 # GR-ConvNet specific configuration
 GRCONVNET_CONFIG = {
@@ -419,7 +419,7 @@ print(f"✓ Model instantiated")
 
 # 2. Load weights
 try:
-    weights_path = "path/to/grconvnet_cornell.pt"  # Update path
+    weights_path = "path/to/grconvnet_jacquard.pt"  # Update path
     state_dict = torch.load(weights_path, map_location='cpu')
     model.load_state_dict(state_dict)
     print(f"✓ Weights loaded from {weights_path}")

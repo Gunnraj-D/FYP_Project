@@ -3,6 +3,8 @@ Debug GR-ConvNet preprocessing to identify issues.
 Checks RGB-D input format and network outputs.
 """
 
+from camera_management.camera_manager import CameraManager
+from object_detection.grconvnet import GRConvNet
 import sys
 import os
 import torch
@@ -13,8 +15,6 @@ import cv2
 src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src')
 sys.path.insert(0, src_path)
 
-from object_detection.grconvnet import GRConvNet
-from camera_management.camera_manager import CameraManager
 
 print("=" * 70)
 print("GR-ConvNet Preprocessing Diagnostic")
@@ -51,7 +51,8 @@ else:
 print(f"   ✓ Color shape: {color_array.shape} (BGR)")
 print(f"   ✓ Depth shape: {depth_array.shape} (meters)")
 print(f"   Color range: [{color_array.min()}, {color_array.max()}]")
-print(f"   Depth range: [{depth_array[depth_array>0].min():.3f}m, {depth_array.max():.3f}m]")
+print(
+    f"   Depth range: [{depth_array[depth_array>0].min():.3f}m, {depth_array.max():.3f}m]")
 
 # Preprocess as grasp_detector_module does
 print("\n3. Preprocessing RGB-D...")
@@ -76,8 +77,10 @@ depth_normalized = (depth_normalized - 0.2) / 1.0
 color_rgb = cv2.cvtColor(color_resized, cv2.COLOR_BGR2RGB)
 color_normalized = color_rgb.astype(np.float32) / 255.0
 
-print(f"   Depth normalized: [{depth_normalized.min():.3f}, {depth_normalized.max():.3f}]")
-print(f"   Color normalized: [{color_normalized.min():.3f}, {color_normalized.max():.3f}]")
+print(
+    f"   Depth normalized: [{depth_normalized.min():.3f}, {depth_normalized.max():.3f}]")
+print(
+    f"   Color normalized: [{color_normalized.min():.3f}, {color_normalized.max():.3f}]")
 
 # Stack RGBD
 rgbd = np.dstack([color_normalized, depth_normalized[:, :, None]])
@@ -86,15 +89,19 @@ print(f"   RGBD stacked shape: {rgbd.shape} (H, W, 4)")
 # Convert to tensor
 rgbd_tensor = torch.from_numpy(rgbd).permute(2, 0, 1).unsqueeze(0).float()
 print(f"   ✓ RGBD tensor shape: {rgbd_tensor.shape} (B, C, H, W)")
-print(f"   Channel 0 (R) range: [{rgbd_tensor[0,0].min():.3f}, {rgbd_tensor[0,0].max():.3f}]")
-print(f"   Channel 1 (G) range: [{rgbd_tensor[0,1].min():.3f}, {rgbd_tensor[0,1].max():.3f}]")
-print(f"   Channel 2 (B) range: [{rgbd_tensor[0,2].min():.3f}, {rgbd_tensor[0,2].max():.3f}]")
-print(f"   Channel 3 (D) range: [{rgbd_tensor[0,3].min():.3f}, {rgbd_tensor[0,3].max():.3f}]")
+print(
+    f"   Channel 0 (R) range: [{rgbd_tensor[0,0].min():.3f}, {rgbd_tensor[0,0].max():.3f}]")
+print(
+    f"   Channel 1 (G) range: [{rgbd_tensor[0,1].min():.3f}, {rgbd_tensor[0,1].max():.3f}]")
+print(
+    f"   Channel 2 (B) range: [{rgbd_tensor[0,2].min():.3f}, {rgbd_tensor[0,2].max():.3f}]")
+print(
+    f"   Channel 3 (D) range: [{rgbd_tensor[0,3].min():.3f}, {rgbd_tensor[0,3].max():.3f}]")
 
 # Load model
 print("\n4. Loading GR-ConvNet model...")
 model = GRConvNet(input_channels=4, channel_size=32, input_size=300)
-weights_path = "src/resources/ml_models/grconvnet_weights/grconvnet_cornell.pt"
+weights_path = "src/resources/ml_models/grconvnet_weights/grconvnet_jacquard.pt"
 state_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
 model.load_state_dict(state_dict)
 model.eval()
@@ -106,7 +113,8 @@ with torch.no_grad():
     pos, cos, sin, width = model(rgbd_tensor)
 
 print(f"   ✓ Inference complete")
-print(f"   Output shapes: pos={pos.shape}, cos={cos.shape}, sin={sin.shape}, width={width.shape}")
+print(
+    f"   Output shapes: pos={pos.shape}, cos={cos.shape}, sin={sin.shape}, width={width.shape}")
 
 # Decode
 q_img = torch.sigmoid(pos)
@@ -114,9 +122,11 @@ ang_img = 0.5 * torch.atan2(sin, cos)
 width_img = F.relu(width)
 
 print(f"\n6. Decoded outputs:")
-print(f"   Quality:  [{q_img.min():.3f}, {q_img.max():.3f}], mean={q_img.mean():.3f}")
+print(
+    f"   Quality:  [{q_img.min():.3f}, {q_img.max():.3f}], mean={q_img.mean():.3f}")
 print(f"   Angle:    [{np.degrees(ang_img.min()):.1f}°, {np.degrees(ang_img.max()):.1f}°], mean={np.degrees(ang_img.mean()):.1f}°")
-print(f"   Width:    [{width_img.min():.1f}, {width_img.max():.1f}], mean={width_img.mean():.1f}")
+print(
+    f"   Width:    [{width_img.min():.1f}, {width_img.max():.1f}], mean={width_img.mean():.1f}")
 
 # Find best grasp
 q_np = q_img.squeeze().cpu().numpy()
@@ -143,11 +153,13 @@ else:
 # Check angle distribution
 ang_std = np.std(ang_np)
 if ang_std < 0.1:
-    print(f"\n⚠️  WARNING: Angles have very low variance (std={np.degrees(ang_std):.1f}°)")
-    print(f"   All angles near {np.degrees(ang_np.mean()):.1f}° - suggests network issue")
+    print(
+        f"\n⚠️  WARNING: Angles have very low variance (std={np.degrees(ang_std):.1f}°)")
+    print(
+        f"   All angles near {np.degrees(ang_np.mean()):.1f}° - suggests network issue")
 else:
-    print(f"\n✓ Angle distribution looks reasonable (std={np.degrees(ang_std):.1f}°)")
+    print(
+        f"\n✓ Angle distribution looks reasonable (std={np.degrees(ang_std):.1f}°)")
 
 print("\n" + "=" * 70)
 camera.stop()
-

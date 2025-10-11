@@ -8,7 +8,7 @@ from typing import Optional
 
 from states.base_state import BaseState
 from states.context import StateContext
-from object_detection.grasp_detector_module import GGcnn2Module
+from object_detection.grasp_detector import GraspDetector as GGcnn2Module
 from config.config import GGCNN2_MODEL_PATH, GRASP_EXECUTION_CONFIG, DEBUG_MODE, DEBUG_CONFIG
 
 logger = logging.getLogger(__name__)

@@ -207,15 +207,15 @@ GGCNN2_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
 # Start with GGCNN2, switch to 'grconvnet' after validation
 GRASP_MODEL_TYPE = 'grconvnet'
 
-# GR-ConvNet model path
+# GR-ConvNet model path (trained on Jacquard dataset)
 GRCONVNET_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
-    "grconvnet_weights" / "grconvnet_cornell.pt"
+    "grconvnet_weights" / "grconvnet_jacquard.pt"
 
 # GR-ConvNet specific configuration
+# Model trained on Jacquard Grasping Dataset (RGB-D, 300x300)
 GRCONVNET_CONFIG = {
-    # Keep 300 to preserve current pipeline (trained on 224)
-    'input_size': 300,
-    'input_channels': 4,            # RGB-D input (R, G, B, Depth) as trained
+    'input_size': 300,              # Input resolution (as trained on Jacquard)
+    'input_channels': 4,            # RGB-D input [D, R, G, B]
     'use_dropout': False,           # Disable for inference
     'dropout_prob': 0.0,
     'use_depth_inpainting': False,  # Enable if depth sparse (test first)

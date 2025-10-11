@@ -354,6 +354,84 @@ class CameraManager:
         self.is_initialized = False
         logger.info("Camera cleanup complete")
 
+    def compute_pixel_to_mm_at_depth(self, depth_m: float, image_width: int = None,
+                                     image_height: int = None) -> Tuple[float, float]:
+        """
+        Compute pixel-to-mm conversion ratio at given depth using camera intrinsics.
+
+        This is more accurate than FOV-based estimation because it uses the actual
+        calibrated focal lengths from the camera.
+
+        For a pinhole camera model:
+            X = (u - ppx) * Z / fx
+            Y = (v - ppy) * Z / fy
+
+        Where (u,v) are pixel coords, (X,Y,Z) are 3D coords in meters, and
+        (fx,fy) are focal lengths in pixels, (ppx,ppy) is principal point.
+
+        The pixel-to-mm ratio at depth Z is: (Z / fx) * 1000 for horizontal,
+        (Z / fy) * 1000 for vertical.
+
+        If image dimensions are provided (e.g., for resized images), scales the
+        focal lengths appropriately.
+
+        Args:
+            depth_m: Distance to object in meters
+            image_width: Target image width (if resized from camera resolution)
+            image_height: Target image height (if resized from camera resolution)
+
+        Returns:
+            Tuple of (mm_per_pixel_horizontal, mm_per_pixel_vertical)
+        """
+        if not self.aligned_color_intrinsics or depth_m <= 0:
+            logger.warning(
+                "Intrinsics not available or invalid depth, using fallback")
+            # Fallback to approximate value
+            return (0.8, 0.8)
+
+        intrinsics = self.aligned_color_intrinsics
+        fx = intrinsics.fx
+        fy = intrinsics.fy
+
+        # If target image dimensions are provided, scale focal lengths
+        if image_width is not None and image_height is not None:
+            scale_x = image_width / intrinsics.width
+            scale_y = image_height / intrinsics.height
+            fx = fx * scale_x
+            fy = fy * scale_y
+            logger.debug(
+                f"Scaled intrinsics: fx={fx:.1f}, fy={fy:.1f} "
+                f"for {image_width}x{image_height} (from {intrinsics.width}x{intrinsics.height})"
+            )
+
+        # Compute mm per pixel at this depth
+        # At depth Z, moving 1 pixel corresponds to Z/f meters, or Z/f * 1000 mm
+        mm_per_px_x = (depth_m / fx) * 1000.0
+        mm_per_px_y = (depth_m / fy) * 1000.0
+
+        return (mm_per_px_x, mm_per_px_y)
+
+    def get_intrinsics_dict(self) -> dict:
+        """
+        Get camera intrinsics as a dictionary for easy inspection/logging.
+
+        Returns:
+            Dictionary with intrinsic parameters (fx, fy, ppx, ppy, width, height)
+        """
+        if not self.aligned_color_intrinsics:
+            return {}
+
+        intrinsics = self.aligned_color_intrinsics
+        return {
+            'fx': intrinsics.fx,
+            'fy': intrinsics.fy,
+            'ppx': intrinsics.ppx,
+            'ppy': intrinsics.ppy,
+            'width': intrinsics.width,
+            'height': intrinsics.height,
+            'model': str(intrinsics.model)
+        }
+
     def is_ready(self) -> bool:
         """Check if camera is ready for use."""
         return self.is_initialized

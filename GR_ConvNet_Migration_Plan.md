@@ -688,7 +688,7 @@ GRASP_MODEL_TYPE = 'ggcnn2'  # Switch to 'grconvnet' after migration
 
 # GR-ConvNet model path
 GRCONVNET_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
-    "grconvnet_weights" / "grconvnet_cornell.pt"  # Or jacquard
+    "grconvnet_weights" / "grconvnet_jacquard.pt"
 
 # GR-ConvNet specific configuration
 GRCONVNET_CONFIG = {
