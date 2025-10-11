@@ -129,6 +129,30 @@ class GGcnn2Module:
                     f"Depth image stats - Max: {depth_image.max():.3f}, Mean: {depth_image.mean():.3f}, Min: {depth_image.min():.3f}")
                 return None
 
+            # Debug: Log selected grasp angle with offset validation
+            pred_angle_deg = np.degrees(grasp_2d['angle'])
+            angle_offset_deg = np.degrees(
+                GRASP_DETECTION_CONFIG.get('grasp_angle_offset_rad', 0.0))
+            jaw_axis_angle_deg = pred_angle_deg + angle_offset_deg
+
+            logger.info(
+                f"📐 GGCNN2 predicted angle: {pred_angle_deg:.1f}° (contact line / long axis)")
+            if angle_offset_deg != 0.0:
+                logger.info(
+                    f"🔄 Applying {angle_offset_deg:.1f}° offset → Jaw axis: {jaw_axis_angle_deg:.1f}°")
+                logger.info(
+                    f"   └─ Gripper will close PERPENDICULAR to predicted angle (across short side)")
+            else:
+                logger.warning(
+                    f"⚠️  No angle offset! Gripper will close ALONG predicted angle (may grasp long side)")
+
+            if DEBUG_MODE:
+                # Log angle distribution statistics
+                ang_np = ang_img.squeeze().cpu().numpy()
+                logger.info(f"📊 Angle map stats - Min: {np.degrees(ang_np.min()):.1f}°, "
+                            f"Max: {np.degrees(ang_np.max()):.1f}°, "
+                            f"Mean: {np.degrees(ang_np.mean()):.1f}°")
+
             # Visualize grasp output if debug mode is enabled
             self._visualize_grasp_output(
                 depth_image, grasp_2d, "GG-CNN2 Grasp Output")
@@ -202,8 +226,12 @@ class GGcnn2Module:
             result_rpy = R.from_matrix(
                 target_orientation_matrix).as_euler('xyz')
             logger.info(
-                f"Grasp orientation - angle from GGCNN2: {np.degrees(grasp_angle_rad):.1f}°, "
-                f"resulting RPY: [{np.degrees(result_rpy[0]):.1f}°, {np.degrees(result_rpy[1]):.1f}°, {np.degrees(result_rpy[2]):.1f}°]")
+                f"🎯 Final grasp orientation after composition:")
+            logger.info(
+                f"   Base frame RPY: [R={np.degrees(result_rpy[0]):6.1f}°, "
+                f"P={np.degrees(result_rpy[1]):6.1f}°, Y={np.degrees(result_rpy[2]):6.1f}°]")
+            logger.info(
+                f"   └─ Yaw ({np.degrees(result_rpy[2]):.1f}°) = jaw closing axis in base frame")
 
             # 4. Centralized Z clamp before IK
             # Ensure Z coordinate is non-negative (above workspace floor)
@@ -335,6 +363,38 @@ class GGcnn2Module:
         # 1) Smooth quality to reduce noisy edge maxima
         q_blur = cv2.GaussianBlur(q_np, (5, 5), 2)
 
+        # 1.5) OPTIONAL: Mask quality map by in-plane angle (if configured)
+        # NOTE: For overhead camera doing top-down grasps, the "angle" is the in-plane
+        # rotation of gripper fingers (around Z-axis), NOT the approach direction.
+        # The approach is ALWAYS vertical (camera pointing down = gripper pointing down).
+        #
+        # Most top-down grasping scenarios should leave this DISABLED (tolerance=None)
+        # to allow free gripper rotation on the table surface for optimal antipodal contacts.
+        topdown_tolerance = GRASP_DETECTION_CONFIG.get(
+            'topdown_angle_tolerance_rad', None)
+
+        if topdown_tolerance is not None:
+            # Only apply angle filtering if explicitly configured
+            topdown_ref_angle = GRASP_DETECTION_CONFIG.get(
+                'topdown_ref_angle', 0.0)
+
+            # Compute angular distance (handling wrap-around in [-π/2, π/2])
+            angle_distance = np.abs(ang_np - topdown_ref_angle)
+            # Handle wrap-around: if distance > π/2, wrap to other side
+            angle_distance = np.minimum(angle_distance, np.pi - angle_distance)
+
+            # Create mask: keep only angles within tolerance of reference
+            topdown_mask = angle_distance <= topdown_tolerance
+
+            # Apply mask to quality map
+            q_blur = q_blur * topdown_mask
+
+            logger.info(f"In-plane angle filter ACTIVE: kept {topdown_mask.sum()}/{topdown_mask.size} pixels "
+                        f"(ref: {np.degrees(topdown_ref_angle):.1f}°, tolerance: ±{np.degrees(topdown_tolerance):.1f}°)")
+        else:
+            logger.debug(
+                "In-plane angle filtering DISABLED - all orientations allowed for top-down grasping")
+
         # 2) Basic thresholding
         base_thresh = GRASP_DETECTION_CONFIG.get('min_quality_threshold', 0.15)
         thresh = max(base_thresh, 0.02)
@@ -456,6 +516,9 @@ class GGcnn2Module:
         best_score = -1e9
         h_resized, w_resized = q_blur.shape
 
+        # Track top candidates for debugging
+        all_candidates = []
+
         for r, c in zip(cand_rows, cand_cols):
             quality = float(q_blur[r, c])
             # distance to centroid (smaller = better)
@@ -540,27 +603,31 @@ class GGcnn2Module:
                 width_penalty = 0.05
 
             # Combine into a final score: higher better
-            # weights (tunable)
+            # Weights tuned to prioritize quality over geometric penalties
+            # This helps network find diagonal grasps even if slightly off-center
             score = (
-                1.0 * quality
-                - 0.6 * dist
-                - 0.9 * edge_penalty
-                - 0.7 * width_penalty
+                2.0 * quality          # Increased to prioritize network's quality predictions
+                - 0.4 * dist           # Reduced to allow off-center high-quality grasps
+                - 0.9 * edge_penalty   # Keep edge penalty to avoid edges
+                - 0.7 * width_penalty  # Keep width penalty for gripper limits
             )
 
             # CRITICAL: Only consider candidates with valid depth data
             if depth_m is not None and depth_m > 0:
+                candidate = {
+                    "center": (int(c), int(r)),
+                    "angle": float(ang_np[r, c]),
+                    "width": float(width_np[r, c]),
+                    "quality": float(q_blur[r, c]),
+                    "score": float(score),
+                    "depth_m": depth_m,
+                    "width_m": width_m
+                }
+                all_candidates.append(candidate)
+
                 if score > best_score:
                     best_score = score
-                    best = {
-                        "center": (int(c), int(r)),
-                        "angle": float(ang_np[r, c]),
-                        "width": float(width_np[r, c]),
-                        "quality": float(q_blur[r, c]),
-                        "score": float(score),
-                        "depth_m": depth_m,
-                        "width_m": width_m
-                    }
+                    best = candidate
             else:
                 # Skip candidates with invalid depth
                 logger.debug(
@@ -569,6 +636,17 @@ class GGcnn2Module:
         # final threshold check
         if best is None or best['quality'] < GRASP_DETECTION_CONFIG.get('min_quality_threshold', 0.15):
             return None
+
+        # Debug: Log top candidates to understand angle distribution
+        if DEBUG_MODE and len(all_candidates) > 1:
+            # Sort by score and show top 5
+            top_candidates = sorted(
+                all_candidates, key=lambda x: x['score'], reverse=True)[:5]
+            logger.info(f"📊 Top {len(top_candidates)} grasp candidates:")
+            for i, cand in enumerate(top_candidates):
+                marker = "👑" if i == 0 else f" {i+1}."
+                logger.info(f"  {marker} Angle: {np.degrees(cand['angle']):6.1f}° | "
+                            f"Quality: {cand['quality']:.3f} | Score: {cand['score']:.3f}")
 
         return best
 

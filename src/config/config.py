@@ -201,8 +201,10 @@ GGCNN2_MODEL_PATH = SRC_DIR / "resources" / "ml_models" / \
 
 # Grasp detection parameters
 GRASP_DETECTION_CONFIG = {
-    # Minimum grasp quality to accept (lowered from 0.5)
-    'min_quality_threshold': 0.15,
+    # Minimum grasp quality to accept
+    # Lower values allow more candidates but may include noisy grasps
+    # 0.15 = standard, 0.10 = permissive, 0.20 = conservative
+    'min_quality_threshold': 0.10,  # Lowered to allow diagonal angle candidates
     'max_grasp_width': 0.100,         # Maximum grasp width in meters (100mm)
     'min_grasp_width': 0.020,         # Minimum grasp width in meters (20mm)
     # Height offset for approach in meters (50mm)
@@ -213,13 +215,19 @@ GRASP_DETECTION_CONFIG = {
     'approach_angle': -90.0,
     'frame_processing_interval': 0.5,  # Process frames every N seconds
     # Angle offset to align gripper finger axis with grasp angle (radians)
-    # Common values:
-    #   0.0    - No offset (default, test first)
-    #   π/2    - 90° offset if gripper fingers are perpendicular to expected
-    #   π      - 180° offset if grasps are mirrored
-    #  -angle  - Negate if sign convention is opposite
-    # This must be calibrated empirically by observing actual grasp attempts
-    'grasp_angle_offset_rad': 0.0,
+    #
+    # CRITICAL: GGCNN2's angle represents the grasp rectangle's LONG AXIS (contact line),
+    # NOT the jaw-closing direction. For antipodal grasps across the SHORT side,
+    # gripper fingers must close PERPENDICULAR to the predicted angle.
+    #
+    # Standard fix for GGCNN2:
+    #   1.5708   - 90° offset (π/2) - rotates gripper to close across short side
+    #   -1.5708  - -90° offset (-π/2) - if handedness is reversed
+    #   0.0      - No offset - only if network outputs jaw axis directly (rare)
+    #
+    # Set to 1.5708 for proper short-side antipodal grasping
+    # 90° = π/2 (converts contact line to jaw axis)
+    'grasp_angle_offset_rad': 1.5708,
     # Rotation composition order for grasp orientation
     # 'down_then_z': R_down @ R_z = align with object, then point down (default)
     # 'z_then_down': R_z @ R_down = point down, then rotate in local frame
@@ -227,6 +235,23 @@ GRASP_DETECTION_CONFIG = {
     # Depth sampling radius (pixels) for consistent depth queries
     # Used in postprocess candidate scoring and 3D pose conversion
     'depth_sample_radius': 5,
+    # In-plane angle filtering for top-down grasps
+    # IMPORTANT: For overhead camera with top-down approach, this filters the
+    # IN-PLANE rotation (around Z-axis), NOT the approach direction!
+    #
+    # For pure top-down grasping with free rotation:
+    #   - Set to None (disable filtering) OR
+    #   - Set to π/2 (1.57) to allow all orientations
+    #
+    # Only restrict if you want specific gripper orientations:
+    #   - 0.26 rad (~15°) for narrow tolerance around reference angle
+    #   - 0.52 rad (~30°) for moderate tolerance
+    #
+    # Set to None to disable angle filtering (recommended for mixed shapes)
+    # None = disabled (free rotation), or set value to restrict
+    'topdown_angle_tolerance_rad': None,
+    # Reference angle in radians (only used if tolerance is not None)
+    'topdown_ref_angle': 0.0,
 }
 
 # Grasp execution parameters
@@ -405,24 +430,25 @@ TRACKED_HUMAN_JOINTS = {
 # Camera transform mode: 'calibrated' or 'simple'
 # - 'calibrated': Use full calibrated hand-eye matrix with rotation and translation
 # - 'simple': Camera on TCP with 180° X rotation (pointing down), no translation offset
-# NOTE: Calibrated mode currently has ~278mm lateral offset error. Use simple mode until recalibrated.
-# Using simple mode by default (calibrated has offset issues)
-CAMERA_TRANSFORM_MODE = 'simple'
+# Updated: 2025-10-11 - New calibration with improved camera mount (7.03cm translation)
+# Using calibrated mode with new camera mount calibration
+CAMERA_TRANSFORM_MODE = 'calibrated'
 
 # Hand-eye transformation matrix: tcp_T_camera (Camera frame → TCP frame)
 # CONVENTION: HAND_EYE_MATRIX = tcp_T_camera
 #   Forward:  tcp_pos = HAND_EYE_MATRIX @ camera_pos_homogeneous
 #   Inverse:  camera_pos = inv(HAND_EYE_MATRIX) @ tcp_pos_homogeneous
 #
-# Generated from 15 best calibration poses using Park method (from 31 unique poses)
-# Translation: 0.0476m (4.76cm camera-to-TCP, ~9cm from gripper base)
+# Generated from 10 calibration poses using Park method (new camera mount)
+# Translation: 0.0703m (7.03cm camera-to-TCP)
 # Note: TCP is defined 13.8cm from gripper base in URDF
-# Reprojection errors: 0.009-0.021 pixels (excellent sub-pixel accuracy)
-# Calibration date: 2025-10-10
+# Reprojection errors: ~3.6 pixels (good accuracy)
+# Calibration date: 2025-10-11
+# Session: 20251011_013816
 HAND_EYE_MATRIX_CALIBRATED = np.array([
-    [-0.9997, -0.0168, -0.0168,  0.0069],
-    [0.0218, -0.9331, -0.3589,  0.0469],
-    [-0.0096, -0.3591,  0.9332, -0.0041],
+    [-0.9994,  0.0335, -0.0117,  0.0064],
+    [-0.0333, -0.9993, -0.0174,  0.0697],
+    [-0.0123, -0.0170,  0.9998,  0.0060],
     [0.0000,  0.0000,  0.0000,  1.0000]
 ], dtype=np.float64)  # Use float64 for numerical precision
 

@@ -29,9 +29,21 @@ class GripperControlState(BaseState):
         self.context.telemetry.update_target_gripper_status(self.action)
         self.context.commands.send(SetGripper(self.action))
         self.sent = True
+        logger.info(f"📤 Sent gripper command: {self.action}")
 
     def exit(self):
         logger.info("Exiting GRIPPER_CONTROL state")
 
     def is_complete(self) -> bool:
-        return self.context.telemetry.get_current_gripper_status() == self.action
+        # CRITICAL: Only complete if command was sent AND gripper reached target state
+        # This prevents premature completion if gripper happens to be in target state already
+        if not self.sent:
+            return False  # Command not sent yet
+
+        current_status = self.context.telemetry.get_current_gripper_status()
+        is_done = current_status == self.action
+
+        if is_done:
+            logger.info(f"✅ Gripper reached target state: {self.action}")
+
+        return is_done
