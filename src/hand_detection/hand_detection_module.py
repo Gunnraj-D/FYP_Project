@@ -204,13 +204,14 @@ class HandTracker:
             try:
                 vector_3d_tcp = self.telemetry.get_camera_vector()
                 if vector_3d_tcp != [0.0, 0.0, 0.0]:
-                    cv2.putText(frame, f"TCP: ({vector_3d_tcp[0]:.2f}, {vector_3d_tcp[1]:.2f}, {vector_3d_tcp[2]:.2f})",
-                                (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    # Calculate distance to target in TCP frame
-                    target_tcp = np.array([0.0, 0.0, 0.25])  # 25cm above TCP
-                    distance_tcp = np.linalg.norm(
-                        np.array(vector_3d_tcp) - target_tcp)
-                    cv2.putText(frame, f"Dist to target: {distance_tcp*1000:.1f}mm",
+                    # Apply calibration offsets for visualization (same as in unified_hand_tracking_state)
+                    vector_3d_tcp_corrected = np.array(vector_3d_tcp).copy()
+                    # Subtract 138mm gripper extension offset
+                    vector_3d_tcp_corrected[2] -= 0.138
+
+                    cv2.putText(frame, f"TCP (raw): ({vector_3d_tcp[0]:.3f}, {vector_3d_tcp[1]:.3f}, {vector_3d_tcp[2]:.3f})",
+                                (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 2)
+                    cv2.putText(frame, f"TCP (corrected): ({vector_3d_tcp_corrected[0]:.3f}, {vector_3d_tcp_corrected[1]:.3f}, {vector_3d_tcp_corrected[2]:.3f})",
                                 (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             except Exception as e:
                 logger.debug(f"Failed to display TCP coordinates: {e}")

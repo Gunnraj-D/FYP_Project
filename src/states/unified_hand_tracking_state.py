@@ -216,9 +216,28 @@ class UnifiedHandTrackingState(BaseState):
                 f"Distance to target (TCP): {distance_to_target_tcp*1000:.1f}mm")
 
             # Convert TCP-relative target to base frame for IK solving
-            # The target in base frame is: current_TCP + (target_pos_tcp - hand_pos_tcp)
-            tcp_offset = target_pos_tcp - hand_pos_tcp
-            target_position_base = current_tcp_pose[:3] + tcp_offset
+            # Calculate offset: hand needs to move from current position to target
+            # But we control TCP, not hand! So we need INVERSE offset
+            # If hand needs to move UP, TCP needs to move DOWN (and vice versa)
+            tcp_offset = hand_pos_tcp - target_pos_tcp  # Inverted: hand - target
+
+            # EXPERIMENTAL: Negate X and Y to fix reflections
+            # Camera mounting causes axis inversions
+            tcp_offset[0] = -tcp_offset[0]  # Fix left/right reflection
+            tcp_offset[1] = -tcp_offset[1]  # Fix forward/back reflection
+
+            # Transform TCP-relative offset to base frame using TCP rotation matrix
+            # Extract rotation matrix from TCP transformation matrix (top-left 3x3)
+            tcp_rotation = current_tcp_matrix[:3, :3]
+
+            # Transform offset vector from TCP frame to base frame
+            tcp_offset_in_base = tcp_rotation @ tcp_offset
+
+            logger.info(f"TCP offset (TCP frame): {tcp_offset}")
+            logger.info(f"TCP offset (base frame): {tcp_offset_in_base}")
+
+            # Add transformed offset to current TCP position in base frame
+            target_position_base = current_tcp_pose[:3] + tcp_offset_in_base
 
             # Clamp to workspace floor at z >= 0 (meters)
             workspace_floor_z = 0.0
@@ -279,8 +298,12 @@ class UnifiedHandTrackingState(BaseState):
             placement_pose_tcp[2] += pickup_height_offset
 
             # Convert TCP-relative placement pose to base frame
-            placement_pose_base = current_tcp_pose[:3] + \
-                (placement_pose_tcp - hand_pos_tcp)
+            # For placement, we're calculating where TCP should be, not chasing a target
+            # So we transform the desired TCP-frame position to base frame directly
+            placement_pose_homogeneous = np.concatenate(
+                [placement_pose_tcp, [1.0]])
+            placement_in_base_homogeneous = current_tcp_matrix @ placement_pose_homogeneous
+            placement_pose_base = placement_in_base_homogeneous[:3]
 
             # Add rotation components using the standard facing-down orientation
             from scipy.spatial.transform import Rotation as R

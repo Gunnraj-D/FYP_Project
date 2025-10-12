@@ -105,3 +105,4 @@ if CAMERA_TRANSFORM_MODE != 'calibrated':
 
 print("\n" + "=" * 60)
 print("✅ Verification complete!")
+

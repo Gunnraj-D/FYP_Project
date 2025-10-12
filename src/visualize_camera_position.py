@@ -51,3 +51,4 @@ print(f"   relative to the gripper's forward direction.")
 print("\n" + "=" * 60)
 print(
     f"✅ Yes, your camera is approximately {distance*100:.1f} cm from the TCP!")
+

@@ -40,7 +40,7 @@ LOGGING_CONFIG = {
 # ============================================================================
 
 # Hand stability parameters
-DISTANCE_TO_REMAIN_M = 0.40  # Distance to maintain from hand (meters)
+DISTANCE_TO_REMAIN_M = 0.15  # Distance to maintain from hand (meters)
 HAND_STABILITY_THRESHOLD = 0.02  # How stable the hand should be (meters)
 # How long hand needs to remain stable (seconds)
 HAND_STABILITY_TIME_THRESHOLD = 2.0

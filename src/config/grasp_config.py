@@ -136,9 +136,10 @@ GRASP_EXECUTION_CONFIG = {
     'post_grasp_delay': 1.0,             # Delay after grasping (seconds)
     'lift_height': 0.100,                # Height to lift after grasp (meters)
 
-    # Retry behavior
-    'retry_attempts': 3,                 # Number of retry attempts
-    'retry_delay': 2.0,                  # Delay between retries (seconds)
+    # Retry behavior (if all frames in collection fail)
+    'retry_attempts': 3,                 # Number of full collection retries
+    # Delay between retry attempts (seconds)
+    'retry_delay': 2.0,
     # Timeout for grasp generation (seconds)
     'grasp_generation_timeout': 10.0,
 

@@ -71,7 +71,7 @@ GRIPPER_CONFIG = {
 
 # Pickup location for objects
 PICKUP_LOCATION = {
-    'position': np.array([0.39, 0.06, 0.25]),
+    'position': np.array([0.520, -0.055, 0.25]),
     'approach_distance': 0.1,  # meters
     'approach_direction': np.array([0, 0, -1])  # From above
 }

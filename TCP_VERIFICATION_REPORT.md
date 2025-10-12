@@ -148,3 +148,4 @@ The key files documenting TCP configuration:
 **Status**: ✅ VERIFIED - Using correct TCP (gripper tip)  
 **Gripper Extension**: 13.8 cm from flange  
 **Camera-to-TCP Distance**: 6.68 cm (from calibration)
+

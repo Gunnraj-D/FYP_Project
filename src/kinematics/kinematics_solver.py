@@ -24,6 +24,92 @@ logger = logging.getLogger(__name__)
 
 # Import joint limits from config
 
+# ============================================================================
+# IK SOLVER CONFIGURATION
+# ============================================================================
+# Epsilon margin to prevent numerical overshoot at joint limits
+# PyBullet's IK solver can overshoot by small amounts due to tolerance
+IK_EPSILON_MARGIN_DEG = 0.8  # Safety margin in degrees (0.014 rad)
+
+
+# ============================================================================
+# EPSILON-CLAMPING HELPER FUNCTIONS
+# ============================================================================
+
+def _epsilon_limits(limits: dict, eps_rad: float) -> tuple:
+    """
+    Shrink joint limit range by epsilon margin on both sides to prevent numerical overshoot.
+
+    Args:
+        limits: Dict with 'min' and 'max' keys (radians)
+        eps_rad: Safety margin in radians to shrink on each side
+
+    Returns:
+        Tuple of (lower, upper, range) with epsilon-shrunk limits
+    """
+    lower = limits['min'] + eps_rad
+    upper = limits['max'] - eps_rad
+
+    # Fallback if epsilon too large for this joint's range
+    if upper < lower:
+        mid = 0.5 * (limits['min'] + limits['max'])
+        logger.warning(f"Epsilon margin {eps_rad:.4f} too large for joint range "
+                       f"[{limits['min']:.4f}, {limits['max']:.4f}], using midpoint")
+        lower, upper = mid, mid
+
+    joint_range = upper - lower
+    return lower, upper, joint_range
+
+
+def _unwrap_to_limits(q: List[float], limits: List[dict]) -> List[float]:
+    """
+    Adjust angles by 2π multiples to lie inside [min, max] if wrapping helps.
+    Prefers solutions closest to the middle of the joint range.
+
+    Args:
+        q: Joint angles (radians)
+        limits: List of dicts with 'min' and 'max' keys
+
+    Returns:
+        Unwrapped joint angles that fit within limits
+    """
+    out = []
+    for qi, lim in zip(q, limits):
+        # If already in bounds, keep as-is
+        if lim['min'] <= qi <= lim['max']:
+            out.append(qi)
+            continue
+
+        # Try shifts of ±2π to fit, prefer midpoint-closest solution
+        qwrap = qi
+        mid = 0.5 * (lim['min'] + lim['max'])
+        best_dist = abs(qi - mid)
+
+        for k in (-2, -1, 1, 2):  # Extended range for safety
+            cand = qi + 2 * np.pi * k
+            if lim['min'] <= cand <= lim['max']:
+                dist = abs(cand - mid)
+                if dist < best_dist:
+                    qwrap = cand
+                    best_dist = dist
+
+        out.append(qwrap)
+    return out
+
+
+def _mid_limits(limits: List[dict]) -> List[float]:
+    """
+    Compute midpoint of each joint's range.
+    Useful for rest poses that avoid boundaries.
+
+    Args:
+        limits: List of dicts with 'min' and 'max' keys
+
+    Returns:
+        List of midpoint angles
+    """
+    return [(lim['min'] + lim['max']) * 0.5 for lim in limits]
+
 
 def homogeneous_to_pose(T: np.ndarray) -> List[float]:
     """
@@ -301,10 +387,21 @@ class InverseKinematicsSolver:
     ) -> np.ndarray:
         """
         Compute IK for target position and optional orientation using PyBullet.
-        - target_position: [x,y,z] in meters
-        - current_joint_angles: either 7-length list or full-length matching revolute joints count
-        - target_orientation: optional 3x3 rotation matrix (world->tcp)
-        Returns numpy array of 7 joint targets (rad) for the robot's first 7 revolute joints.
+
+        Uses epsilon-clamping strategy to prevent joint limit violations:
+        - Joint limits are shrunk by IK_EPSILON_MARGIN_DEG (default 0.8°) before solving
+        - Solution is unwrapped (2π shifts) to fit within actual joint limits
+        - Falls back to hard clamping only if epsilon-clamping + unwrapping fail
+
+        Args:
+            target_position: [x,y,z] in meters
+            current_joint_angles: either 7-length list or full-length matching revolute joints count
+            target_orientation: optional 3x3 rotation matrix (world->tcp)
+            max_iterations: maximum IK solver iterations (default 100)
+            tolerance: positional error threshold in meters (default 1e-3)
+
+        Returns:
+            numpy array of 7 joint targets (rad) for the robot's first 7 revolute joints
         """
         # Normalize inputs
         if target_position is None or any(x is None for x in target_position):
@@ -344,7 +441,7 @@ class InverseKinematicsSolver:
         except Exception as e:
             logger.debug(f"Could not seed IK with current joint state: {e}")
 
-        # Prepare joint limits for PyBullet IK
+        # Prepare joint limits for PyBullet IK with epsilon-clamping
         # IMPORTANT: Must map limits to ALL joints in URDF, not just revolute joints
         num_joints = p.getNumJoints(self.robot_id, physicsClientId=self.client)
 
@@ -353,6 +450,9 @@ class InverseKinematicsSolver:
         upper_limits = []
         joint_ranges = []
         rest_poses = []
+
+        # Epsilon margin to prevent solver overshoot
+        eps_rad = np.deg2rad(IK_EPSILON_MARGIN_DEG)
 
         # Build mapping of revolute joint index -> KUKA joint name robustly by name
         # This handles URDF ordering differences correctly
@@ -384,15 +484,18 @@ class InverseKinematicsSolver:
         # Log the mapping for debugging
         logger.debug(f"Joint mapping: {revolute_to_kuka}")
 
-        # Apply limits to ALL joints in the URDF
+        # Apply epsilon-shrunk limits to ALL joints in the URDF
         for joint_idx in range(num_joints):
             if joint_idx in revolute_to_kuka:
-                # This is one of the 7 KUKA revolute joints - use actual limits
+                # This is one of the 7 KUKA revolute joints - use epsilon-shrunk limits
                 kuka_name = revolute_to_kuka[joint_idx]
                 limits = JOINT_LIMITS[kuka_name]
-                lower_limits.append(limits['min'])
-                upper_limits.append(limits['max'])
-                joint_ranges.append(limits['max'] - limits['min'])
+
+                # Apply epsilon-clamping to prevent overshoot
+                ll, uu, jr = _epsilon_limits(limits, eps_rad)
+                lower_limits.append(ll)
+                upper_limits.append(uu)
+                joint_ranges.append(jr)
 
                 # Rest pose: use the value from initial_full for the matching revolute joint index
                 # Find the revolute joint array index
@@ -466,10 +569,21 @@ class InverseKinematicsSolver:
                 "IK returned fewer than 7 revolute joint values.")
         solution_7 = solution_revolute[:7]
 
-        # Validate joint limits
+        # Unwrap to actual joint limits (try 2π shifts to fit in bounds)
+        # This is critical because wrap_to_pi doesn't account for asymmetric joint limits
+        kuka_limits = [JOINT_LIMITS[name] for name in joint_names]
+        solution_7 = np.array(_unwrap_to_limits(
+            solution_7.tolist(), kuka_limits))
+
+        # Validate joint limits (should rarely fail now with epsilon-clamping + unwrapping)
         if not validate_joint_limits(solution_7.tolist()):
-            logger.warning("IK solution violates joint limits, clamping...")
+            logger.warning(
+                f"IK solution violates joint limits after epsilon-clamping (ε={IK_EPSILON_MARGIN_DEG}°) "
+                f"and unwrapping. Clamping to hard limits. Consider increasing epsilon margin.")
             solution_7 = np.array(clamp_joint_limits(solution_7.tolist()))
+        else:
+            logger.debug(
+                f"✓ IK solution within limits (epsilon-clamped with {IK_EPSILON_MARGIN_DEG}° margin)")
 
         # Optional: verify positional error
         # Apply solution to robot and compute actual TCP
@@ -492,22 +606,184 @@ class InverseKinematicsSolver:
         self,
         target_pose: List[float],
         current_joint_angles: List[float],
-        max_iterations: int = 100,
-        tolerance: float = 1e-3  # Relaxed from 1e-4 to handle small residuals after clamping
+        # Higher default for pose (orientation convergence needs more iterations)
+        max_iterations: int = 150,
+        tolerance: float = 1e-3,
+        verify_orientation: bool = False,
+        orientation_tolerance_deg: float = 2.0
     ) -> np.ndarray:
         """
-        target_pose expected as [x,y,z, rx, ry, rz] where rx,ry,rz are Euler 'xyz' angles (radians).
+        Solve IK for full 6-DOF pose (position + orientation).
+
+        Inherits all Phase 1 epsilon-clamping benefits from solve_XYZ.
+        Orientation tracking typically requires more iterations than position-only IK.
+
+        IMPORTANT: Target orientation must be in WORLD frame at the TCP link, not robot base frame.
+
+        Args:
+            target_pose: [x, y, z, rx, ry, rz] where:
+                - x, y, z: position in meters (world frame)
+                - rx, ry, rz: Euler angles in radians (world frame, 'xyz' convention)
+            current_joint_angles: Either 7-length or full revolute joint array
+            max_iterations: IK solver iterations (default 150, higher than position-only)
+            tolerance: Position error threshold in meters (default 1e-3)
+            verify_orientation: If True, check and log orientation error after solving
+            orientation_tolerance_deg: Warning threshold for orientation error (default 2.0°)
+
+        Returns:
+            numpy array of 7 joint angles (rad) that achieve the target pose
+
+        Notes:
+            - Orientation uses quaternion internally (converted from Euler 'xyz')
+            - Same null-space limit enforcement as solve_XYZ (epsilon-clamping active)
+            - For strict orientation accuracy, consider iterative refinement or lower damping
+            - If orientation error is high, try increasing max_iterations or reducing tolerance
         """
         position = target_pose[:3]
         euler_angles = target_pose[3:6]
         rotation_matrix = R.from_euler('xyz', euler_angles).as_matrix()
-        return self.solve_XYZ(
+
+        # Call solve_XYZ with orientation constraint
+        solution = self.solve_XYZ(
             position,
             current_joint_angles,
             target_orientation=rotation_matrix,
             max_iterations=max_iterations,
             tolerance=tolerance
         )
+
+        # Optional: Verify orientation error
+        if verify_orientation:
+            try:
+                # Apply solution and compute achieved orientation
+                full_joints = np.zeros(len(self.revolute_joint_indices))
+                full_joints[:7] = solution
+                self._set_joint_states_from_list(full_joints.tolist())
+
+                link_state = p.getLinkState(
+                    self.robot_id,
+                    self.end_effector_link_index,
+                    computeForwardKinematics=True,
+                    physicsClientId=self.client
+                )
+
+                # orientation quaternion
+                achieved_quat = np.array(link_state[5])
+                achieved_rot = R.from_quat(achieved_quat).as_matrix()
+
+                # Compute orientation error (angle between rotation matrices)
+                # R_error = R_target^T @ R_achieved
+                R_error = rotation_matrix.T @ achieved_rot
+                angle_error = np.arccos(
+                    np.clip((np.trace(R_error) - 1) / 2, -1, 1))
+                angle_error_deg = np.rad2deg(angle_error)
+
+                if angle_error_deg > orientation_tolerance_deg:
+                    logger.warning(
+                        f"Orientation error: {angle_error_deg:.2f}° (tolerance {orientation_tolerance_deg:.1f}°). "
+                        f"Consider increasing max_iterations or using iterative refinement."
+                    )
+                else:
+                    logger.debug(
+                        f"✓ Orientation error: {angle_error_deg:.3f}° (within tolerance)")
+
+            except Exception as ex:
+                logger.debug(f"Orientation verification failed: {ex}")
+
+        return solution
+
+    def solve_pose_iterative(
+        self,
+        target_pose: List[float],
+        current_joint_angles: List[float],
+        max_outer_iterations: int = 3,
+        max_ik_iterations: int = 150,
+        position_tolerance: float = 1e-3,
+        orientation_tolerance_deg: float = 1.0
+    ) -> np.ndarray:
+        """
+        Iterative pose refinement for strict position AND orientation accuracy.
+
+        Repeatedly invokes IK from the last solution until both position and orientation
+        errors are below threshold, or max outer iterations reached.
+
+        Use this when standard solve_pose doesn't achieve sufficient orientation accuracy.
+
+        Args:
+            target_pose: [x, y, z, rx, ry, rz] in world frame
+            current_joint_angles: Initial joint configuration
+            max_outer_iterations: Maximum refinement iterations (default 3)
+            max_ik_iterations: IK solver iterations per refinement (default 150)
+            position_tolerance: Position error threshold in meters (default 1e-3)
+            orientation_tolerance_deg: Orientation error threshold in degrees (default 1.0°)
+
+        Returns:
+            numpy array of 7 joint angles that achieve target pose within tolerances
+        """
+        position = np.array(target_pose[:3])
+        euler_angles = target_pose[3:6]
+        target_rot = R.from_euler('xyz', euler_angles).as_matrix()
+        target_quat = R.from_matrix(target_rot).as_quat()
+
+        solution = np.array(current_joint_angles[:7] if len(
+            current_joint_angles) >= 7 else [0.0]*7)
+
+        for iteration in range(max_outer_iterations):
+            # Solve IK from current best solution
+            solution = self.solve_XYZ(
+                position.tolist(),
+                solution.tolist(),
+                target_orientation=target_rot,
+                max_iterations=max_ik_iterations,
+                tolerance=position_tolerance
+            )
+
+            # Check both position and orientation errors
+            full_joints = np.zeros(len(self.revolute_joint_indices))
+            full_joints[:7] = solution
+            self._set_joint_states_from_list(full_joints.tolist())
+
+            link_state = p.getLinkState(
+                self.robot_id,
+                self.end_effector_link_index,
+                computeForwardKinematics=True,
+                physicsClientId=self.client
+            )
+
+            achieved_pos = np.array(link_state[4])
+            achieved_quat = np.array(link_state[5])
+            achieved_rot = R.from_quat(achieved_quat).as_matrix()
+
+            # Position error
+            pos_error = np.linalg.norm(achieved_pos - position)
+
+            # Orientation error (geodesic distance on SO(3))
+            R_error = target_rot.T @ achieved_rot
+            angle_error = np.arccos(
+                np.clip((np.trace(R_error) - 1) / 2, -1, 1))
+            angle_error_deg = np.rad2deg(angle_error)
+
+            logger.debug(
+                f"Iteration {iteration+1}/{max_outer_iterations}: "
+                f"pos_err={pos_error*1000:.2f}mm, orient_err={angle_error_deg:.2f}°"
+            )
+
+            # Check convergence
+            if pos_error <= position_tolerance and angle_error_deg <= orientation_tolerance_deg:
+                logger.info(
+                    f"✓ Pose converged in {iteration+1} iteration(s): "
+                    f"pos_err={pos_error*1000:.2f}mm, orient_err={angle_error_deg:.2f}°"
+                )
+                return solution
+
+        # Max iterations reached - log final error
+        logger.warning(
+            f"Iterative pose refinement reached max iterations ({max_outer_iterations}). "
+            f"Final errors: pos={pos_error*1000:.2f}mm, orient={angle_error_deg:.2f}°. "
+            f"Target may be infeasible or consider increasing iterations."
+        )
+
+        return solution
 
     # (optional) destructor fallback
     def __del__(self):

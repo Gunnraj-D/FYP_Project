@@ -92,7 +92,8 @@ from config.grasp_config import (
     GRASP_MODEL_TYPE,
     GRCONVNET_CONFIG,
     GRASP_DETECTION_CONFIG,
-    GRASP_EXECUTION_CONFIG
+    GRASP_EXECUTION_CONFIG,
+    OBJECT_PROFILES
 )
 
 # System configuration
@@ -170,6 +171,7 @@ __all__ = [
     'GRCONVNET_CONFIG',
     'GRASP_DETECTION_CONFIG',
     'GRASP_EXECUTION_CONFIG',
+    'OBJECT_PROFILES',
 
     # System
     'LOOP_RATE_MS',
