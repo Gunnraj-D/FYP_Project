@@ -119,15 +119,16 @@ class UnifiedHandTrackingState(BaseState):
             hand_pos_tcp = np.array(hand_position)
 
             # ========================================================================
-            # TEMPORARY HACK: Compensate for tool0 vs tcp calibration mismatch
+            # TEMPORARY HACK: Compensate for calibration offsets
             # TODO: Remove after recalibrating hand-eye matrix with correct TCP
             #
-            # Issue: Hand-eye calibration was done with tool0 (link 7) as TCP
-            #        Now using actual tcp (link 9) = 138mm lower
-            # Fix: Add 138mm Z offset to hand position in TCP frame
-            hand_pos_tcp[2] -= 0.138  # Subtract 138mm gripper extension offset
+            # Camera is offset from gripper TCP by ~64mm in Y direction
+            # Calibration was done with tool0 (link 7) instead of actual TCP (link 9)
+            hand_pos_tcp[1] -= 0.064  # Subtract 64mm Y offset (camera to TCP)
+            # Subtract 138mm Z offset (gripper extension)
+            hand_pos_tcp[2] -= 0.138
             logger.debug(
-                f"⚠️ TEMP: Applied -138mm Z offset for calibration mismatch (hand Z: {hand_pos_tcp[2]:.3f}m)")
+                f"⚠️ TEMP: Applied calibration offsets (Y: -64mm, Z: -138mm) -> hand TCP: {hand_pos_tcp}")
             # ========================================================================
 
             # Dead zone is relative to TCP: hand should be at [0, 0, DISTANCE_TO_REMAIN_M] in TCP frame
@@ -197,9 +198,14 @@ class UnifiedHandTrackingState(BaseState):
             hand_pos_tcp = np.array(hand_position)
 
             # ========================================================================
-            # TEMPORARY HACK: Compensate for tool0 vs tcp calibration mismatch
+            # TEMPORARY HACK: Compensate for calibration offsets
             # TODO: Remove after recalibrating hand-eye matrix with correct TCP
-            hand_pos_tcp[2] -= 0.138  # Subtract 138mm gripper extension offset
+            #
+            # Camera is offset from gripper TCP by ~64mm in Y direction
+            # Calibration was done with tool0 (link 7) instead of actual TCP (link 9)
+            hand_pos_tcp[1] -= 0.064  # Subtract 64mm Y offset (camera to TCP)
+            # Subtract 138mm Z offset (gripper extension)
+            hand_pos_tcp[2] -= 0.138
             # ========================================================================
 
             # Target in TCP frame: hand should be at [0, 0, DISTANCE_TO_REMAIN_M]
@@ -285,9 +291,11 @@ class UnifiedHandTrackingState(BaseState):
             hand_pos_tcp = np.array(hand_position)
 
             # ========================================================================
-            # TEMPORARY HACK: Compensate for tool0 vs tcp calibration mismatch
+            # TEMPORARY HACK: Compensate for calibration offsets
             # TODO: Remove after recalibrating hand-eye matrix with correct TCP
-            hand_pos_tcp[2] -= 0.138  # Subtract 138mm gripper extension offset
+            hand_pos_tcp[1] -= 0.064  # Subtract 64mm Y offset (camera to TCP)
+            # Subtract 138mm Z offset (gripper extension)
+            hand_pos_tcp[2] -= 0.138
             # ========================================================================
 
             # Get pickup height offset from telemetry

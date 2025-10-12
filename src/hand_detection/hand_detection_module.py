@@ -206,7 +206,9 @@ class HandTracker:
                 if vector_3d_tcp != [0.0, 0.0, 0.0]:
                     # Apply calibration offsets for visualization (same as in unified_hand_tracking_state)
                     vector_3d_tcp_corrected = np.array(vector_3d_tcp).copy()
-                    # Subtract 138mm gripper extension offset
+                    # Subtract 64mm Y offset (camera to TCP)
+                    vector_3d_tcp_corrected[1] -= 0.064
+                    # Subtract 138mm Z offset (gripper extension)
                     vector_3d_tcp_corrected[2] -= 0.138
 
                     cv2.putText(frame, f"TCP (raw): ({vector_3d_tcp[0]:.3f}, {vector_3d_tcp[1]:.3f}, {vector_3d_tcp[2]:.3f})",
