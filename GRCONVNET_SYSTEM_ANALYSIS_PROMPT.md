@@ -485,3 +485,5 @@ consensus_angle = circular_mean(top_k_angles)
 4. **Quick fixes**: Are there any immediate adjustments we can test (e.g., different offset for diagonals) without retraining?
 
 Please consider the angle periodicity (180° gripper symmetry), the training data characteristics (Cornell dataset), and the coordinate transformations involved in your analysis.
+
+

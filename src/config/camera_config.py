@@ -37,15 +37,16 @@ CAMERA_TRANSFORM_MODE = 'calibrated'
 #   Forward:  tcp_pos = HAND_EYE_MATRIX @ camera_pos_homogeneous
 #   Inverse:  camera_pos = inv(HAND_EYE_MATRIX) @ tcp_pos_homogeneous
 #
-# Generated from 10 calibration poses using Park method
-# Translation: 0.0703m (7.03cm camera-to-TCP)
-# Reprojection errors: ~3.6 pixels (good accuracy)
-# Calibration date: 2025-10-11
-# Session: 20251011_013816
+# Generated from best 15 of 18 calibration poses using Park method
+# Translation: 0.0669m (6.69cm camera-to-TCP)
+# Rotation: 178.5° yaw, -0.7° roll, -0.5° pitch
+# Reprojection errors: Mean 3.53, Max 3.82 (excellent consistency)
+# Calibration date: 2025-10-12
+# Sessions: 20251012_233752 (7 poses) + 20251012_234617 (11 poses)
 HAND_EYE_MATRIX_CALIBRATED = np.array([
-    [-0.9994,  0.0335, -0.0117,  0.0064],
-    [-0.0333, -0.9993, -0.0174,  0.0697],
-    [-0.0123, -0.0170,  0.9998,  0.0060],
+    [-0.9996, -0.0268,  0.0084,  0.0136],
+    [0.0267, -0.9996, -0.0123,  0.0639],
+    [0.0087, -0.0121,  0.9999,  0.0141],
     [0.0000,  0.0000,  0.0000,  1.0000]
 ], dtype=np.float64)
 

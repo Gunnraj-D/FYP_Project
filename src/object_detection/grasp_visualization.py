@@ -207,3 +207,4 @@ class GraspVisualizer:
             logger.debug("Closed visualization windows")
         except Exception as e:
             logger.warning(f"Failed to cleanup visualization windows: {e}")
+

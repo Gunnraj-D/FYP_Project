@@ -1,4 +1,5 @@
 import logging
+import time
 from states.context import StateContext
 from .base_state import BaseState
 from control.command_bus import SetGripper
@@ -18,6 +19,7 @@ class GripperControlState(BaseState):
 
         self.action = action
         self.sent = False
+        self.send_time = None
 
     def enter(self):
         logger.info("Entering GRIPPER_CONTROL state")
@@ -29,21 +31,22 @@ class GripperControlState(BaseState):
         self.context.telemetry.update_target_gripper_status(self.action)
         self.context.commands.send(SetGripper(self.action))
         self.sent = True
+        self.send_time = time.time()
         logger.info(f"📤 Sent gripper command: {self.action}")
 
     def exit(self):
         logger.info("Exiting GRIPPER_CONTROL state")
 
     def is_complete(self) -> bool:
-        # CRITICAL: Only complete if command was sent AND gripper reached target state
-        # This prevents premature completion if gripper happens to be in target state already
-        if not self.sent:
+        # Wait 2.5 seconds after sending command
+        if not self.sent or self.send_time is None:
             return False  # Command not sent yet
 
-        current_status = self.context.telemetry.get_current_gripper_status()
-        is_done = current_status == self.action
+        elapsed_time = time.time() - self.send_time
+        is_done = elapsed_time >= 2.5
 
         if is_done:
-            logger.info(f"✅ Gripper reached target state: {self.action}")
+            logger.info(
+                f"✅ Gripper wait completed: {self.action} (waited {elapsed_time:.2f}s)")
 
         return is_done
