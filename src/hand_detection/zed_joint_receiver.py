@@ -112,7 +112,8 @@ class ZEDJointReceiver:
         host: str = '127.0.0.1',
         port: int = 5005,
         callback: Optional[Callable[[FrameData], None]] = None,
-        buffer_size: int = 4096
+        buffer_size: int = 4096,
+        remap_to_z_up: bool = True
     ):
         """
         Initialize ZED Joint Receiver.
@@ -122,11 +123,13 @@ class ZEDJointReceiver:
             port: Port to listen on
             callback: Optional callback function called for each received frame
             buffer_size: Size of receive buffer in bytes
+            remap_to_z_up: If True, remap axes (x,y,z)->(z,x,y) and negate y
         """
         self.host = host
         self.port = port
         self.callback = callback
         self.buffer_size = buffer_size
+        self.remap_to_z_up = remap_to_z_up
 
         self.server_socket: Optional[socket.socket] = None
         self.client_socket: Optional[socket.socket] = None
@@ -300,11 +303,26 @@ class ZEDJointReceiver:
             joints = []
 
             for raw_joint in raw_skeleton.get('joints', []):
+                # Get raw coordinates from Unity
+                x_raw = raw_joint.get('x', 0.0)
+                y_raw = raw_joint.get('y', 0.0)
+                z_raw = raw_joint.get('z', 0.0)
+
+                # Remap axes to Z-up, right-handed if requested: (x,y,z)->(z,x,y)
+                if self.remap_to_z_up:
+                    x_out = z_raw
+                    y_out = x_raw
+                    z_out = y_raw
+                else:
+                    x_out = x_raw
+                    y_out = y_raw
+                    z_out = z_raw
+
                 joint = JointData(
                     joint_name=raw_joint.get('jointName', 'UNKNOWN'),
-                    x=raw_joint.get('x', 0.0),
-                    y=raw_joint.get('y', 0.0),
-                    z=raw_joint.get('z', 0.0)
+                    x=x_out,
+                    y=-y_out,  # Negate y-axis
+                    z=z_out
                 )
                 joints.append(joint)
 
