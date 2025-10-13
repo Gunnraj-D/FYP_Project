@@ -451,9 +451,11 @@ class DebugSystemManager:
         self.execution_active = True
         self.force_complete = False
         last_logged_step = -1
+        sequence_complete = False
 
         try:
-            while sequencer.task_queue and not self.force_complete:
+            # Run until sequence is complete (queue empty AND current state done)
+            while not sequence_complete and not self.force_complete:
                 sequencer.step()
                 time.sleep(0.1)  # 10Hz execution rate
 
@@ -464,6 +466,11 @@ class DebugSystemManager:
                     logger.info(f"Sequencer progress: {current_step}/{progress['total_steps']} "
                                 f"({progress['progress_percent']:.1f}%)")
                     last_logged_step = current_step
+
+                # Check if truly complete: queue empty AND current state finished
+                if not sequencer.task_queue and self.state_machine.current_state.is_complete():
+                    sequence_complete = True
+                    logger.info("All sequence states completed")
 
                 # Check for user input to force completion
                 if self._check_for_force_complete():
