@@ -44,3 +44,21 @@ DISTANCE_TO_REMAIN_M = 0.2  # Distance to maintain from hand (meters)
 HAND_STABILITY_THRESHOLD = 0.02  # How stable the hand should be (meters)
 # How long hand needs to remain stable (seconds)
 HAND_STABILITY_TIME_THRESHOLD = 2.0
+
+# Z-coordinate filtering parameters (added for adaptive Z filtering)
+# EMA alpha when depth quality is good (higher -> faster)
+Z_FILTER_ALPHA_GOOD = 0.6
+# EMA alpha when depth quality is poor (lower -> stronger smoothing)
+Z_FILTER_ALPHA_POOR = 0.12
+# Minimum fraction of valid pixels in ROI to consider depth "good"
+MIN_DEPTH_VALID_RATIO = 0.30
+# Depth std-dev in meters above which quality is poor (e.g., 30mm)
+MAX_DEPTH_STD_DEV = 0.03
+# Max absolute Z change allowed per detection frame (meters; 2cm)
+MAX_Z_CHANGE_PER_FRAME = 0.02
+# Hysteresis to avoid flipping quality on small changes
+Z_FILTER_HYSTERESIS_FACTOR = 0.85
+# Sec: allow initialization time where we accept measurement directly
+Z_FILTER_INIT_TIMEOUT = 0.5
+# Enable/disable debug logging for depth quality (for debug)
+LOG_DEPTH_QUALITY = True

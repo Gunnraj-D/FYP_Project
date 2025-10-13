@@ -94,7 +94,7 @@ class OPCClient:
 
         # Loop timing history for warning management
         self.loop_timings: List[float] = []
-        self.max_timing_history = 25
+        self.max_timing_history = 100
 
         # Thread safety
         self._lock = threading.RLock()
@@ -315,7 +315,7 @@ class OPCClient:
             if len(self.loop_timings) > self.max_timing_history:
                 self.loop_timings.pop(0)
 
-            # Only warn if average of last 25 loops exceeds threshold
+            # Only warn if average of last 100 loops exceeds threshold
             if len(self.loop_timings) >= self.max_timing_history:
                 avg_elapsed = sum(self.loop_timings) / len(self.loop_timings)
                 if avg_elapsed > loop_interval * 1.1:  # Warn if average significantly over

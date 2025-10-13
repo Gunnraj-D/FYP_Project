@@ -149,3 +149,4 @@ The key files documenting TCP configuration:
 **Gripper Extension**: 13.8 cm from flange  
 **Camera-to-TCP Distance**: 6.68 cm (from calibration)
 
+

@@ -71,16 +71,16 @@ GRIPPER_CONFIG = {
 
 # Pickup location for objects
 PICKUP_LOCATION = {
-    'position': np.array([0.520, -0.055, 0.25]),
+    'position': np.array([0.0, -0.6, 0.25]),
     'approach_distance': 0.1,  # meters
     'approach_direction': np.array([0, 0, -1])  # From above
 }
 
 # Pre-pickup pose [x, y, z, rx, ry, rz] in meters and radians
-PRE_PICKUP_POSE = [0.4, 0, 0.5, 0, 0, -1.57]
+PRE_PICKUP_POSE = [0.0, -0.6, 0.5, 0, 0, -1.57]
 
 # Handoff approach pose for hand tracking
-HANDOFF_APPROACH_POSE = [0.5, 0.2, 0.35, 0, 0, -1.57]
+HANDOFF_APPROACH_POSE = [0.0, -0.6, 0.25, 0, 0, -1.57]
 
 # Place operation distances
 PLACE_APPROACH_DISTANCE = 0.150  # meters (150mm)

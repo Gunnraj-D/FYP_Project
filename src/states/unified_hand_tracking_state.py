@@ -52,20 +52,35 @@ class UnifiedHandTrackingState(BaseState):
 
     def enter(self):
         """Initialize hand tracker and reset state variables."""
-        logger.info("Entering UnifiedHandTrackingState")
+        print("=" * 80)
+        print("🎬 ENTER METHOD CALLED - UnifiedHandTrackingState")
+        print("=" * 80)
+        logger.info("🎬 Entering UnifiedHandTrackingState")
 
         try:
             # Initialize hand tracker
+            print("Step 1: Creating HandTracker instance...")
+            logger.info("Creating HandTracker instance...")
+
             self.hand_tracker = HandTracker(
                 telemetry=self.context.telemetry,
                 command_bus=self.context.commands,
                 camera_manager=self.context.camera
             )
+            print("Step 2: HandTracker instance created ✓")
+            logger.info("HandTracker instance created")
 
             # Start hand tracking
+            print("Step 3: Starting hand tracker...")
+            logger.info("Starting hand tracker...")
+
             self.hand_tracker.start()
 
+            print("Step 4: Hand tracker started ✓")
+            logger.info("Hand tracker started")
+
             # Reset state variables
+            print("Step 5: Resetting state variables...")
             self.state_start_time = time.time()
             self.hand_stable_start_time = 0.0
             self.is_hand_stable = False
@@ -73,10 +88,15 @@ class UnifiedHandTrackingState(BaseState):
             self.last_stability_check = 0.0
             self.last_movement_time = 0.0
 
-            logger.info("UnifiedHandTrackingState initialized successfully")
+            print("✅ UnifiedHandTrackingState initialized successfully")
+            logger.info("✅ UnifiedHandTrackingState initialized successfully")
 
         except Exception as e:
-            logger.error(f"Failed to initialize UnifiedHandTrackingState: {e}")
+            print(f"❌ EXCEPTION DURING INIT: {e}")
+            logger.error(
+                f"❌ Failed to initialize UnifiedHandTrackingState: {e}", exc_info=True)
+            import traceback
+            traceback.print_exc()
             raise
 
     def execute(self):
@@ -93,8 +113,12 @@ class UnifiedHandTrackingState(BaseState):
             # Get current hand position from telemetry
             hand_position = self.context.telemetry.get_camera_vector()
 
+            logger.debug(
+                f"Execute: hand_position from telemetry = {hand_position}")
+
             # Check if hand is detected
             if hand_position is not None and not np.array_equal(hand_position, [0.0, 0.0, 0.0]):
+                logger.info(f"Hand detected at position: {hand_position}")
                 self._update_hand_tracking(hand_position)
                 self._move_robot_toward_hand(hand_position, current_time)
                 self._calculate_placement_pose(hand_position)
@@ -102,10 +126,11 @@ class UnifiedHandTrackingState(BaseState):
                 # Reset stability if no hand detected
                 self.is_hand_stable = False
                 self.hand_stable_start_time = 0.0
-                logger.debug("No hand detected, resetting stability")
+                logger.info("No hand detected, resetting stability")
 
         except Exception as e:
-            logger.error(f"Error in UnifiedHandTrackingState execution: {e}")
+            logger.error(
+                f"Error in UnifiedHandTrackingState execution: {e}", exc_info=True)
 
     def _update_hand_tracking(self, hand_position):
         """Update hand tracking state and check stability based on dead zone relative to TCP."""
@@ -122,13 +147,12 @@ class UnifiedHandTrackingState(BaseState):
             # TEMPORARY HACK: Compensate for calibration offsets
             # TODO: Remove after recalibrating hand-eye matrix with correct TCP
             #
-            # Camera is offset from gripper TCP by ~64mm in Y direction
             # Calibration was done with tool0 (link 7) instead of actual TCP (link 9)
-            hand_pos_tcp[1] -= 0.064  # Subtract 64mm Y offset (camera to TCP)
+            # Hand-eye matrix already accounts for camera X/Y offset from TCP
             # Subtract 138mm Z offset (gripper extension)
             hand_pos_tcp[2] -= 0.138
             logger.debug(
-                f"⚠️ TEMP: Applied calibration offsets (Y: -64mm, Z: -138mm) -> hand TCP: {hand_pos_tcp}")
+                f"⚠️ TEMP: Applied Z calibration offset (-138mm) -> hand TCP: {hand_pos_tcp}")
             # ========================================================================
 
             # Dead zone is relative to TCP: hand should be at [0, 0, DISTANCE_TO_REMAIN_M] in TCP frame
@@ -201,9 +225,8 @@ class UnifiedHandTrackingState(BaseState):
             # TEMPORARY HACK: Compensate for calibration offsets
             # TODO: Remove after recalibrating hand-eye matrix with correct TCP
             #
-            # Camera is offset from gripper TCP by ~64mm in Y direction
             # Calibration was done with tool0 (link 7) instead of actual TCP (link 9)
-            hand_pos_tcp[1] -= 0.064  # Subtract 64mm Y offset (camera to TCP)
+            # Hand-eye matrix already accounts for camera X/Y offset from TCP
             # Subtract 138mm Z offset (gripper extension)
             hand_pos_tcp[2] -= 0.138
             # ========================================================================
@@ -222,15 +245,14 @@ class UnifiedHandTrackingState(BaseState):
                 f"Distance to target (TCP): {distance_to_target_tcp*1000:.1f}mm")
 
             # Convert TCP-relative target to base frame for IK solving
-            # Calculate offset: hand needs to move from current position to target
-            # But we control TCP, not hand! So we need INVERSE offset
-            # If hand needs to move UP, TCP needs to move DOWN (and vice versa)
-            tcp_offset = hand_pos_tcp - target_pos_tcp  # Inverted: hand - target
+            # We want hand to move from hand_pos_tcp to target_pos_tcp (both in TCP frame)
+            # The TCP must move by (target - hand) to achieve this
+            tcp_offset = target_pos_tcp - hand_pos_tcp
 
-            # EXPERIMENTAL: Negate X and Y to fix reflections
-            # Camera mounting causes axis inversions
-            tcp_offset[0] = -tcp_offset[0]  # Fix left/right reflection
-            tcp_offset[1] = -tcp_offset[1]  # Fix forward/back reflection
+            # Negate all axes to fix reflections (camera mounting causes inversions)
+            tcp_offset[0] = -tcp_offset[0]  # Fix left/right reflection (X)
+            tcp_offset[1] = -tcp_offset[1]  # Fix top/bottom reflection (Y)
+            tcp_offset[2] = -tcp_offset[2]  # Fix depth reflection (Z)
 
             # Transform TCP-relative offset to base frame using TCP rotation matrix
             # Extract rotation matrix from TCP transformation matrix (top-left 3x3)
@@ -293,7 +315,7 @@ class UnifiedHandTrackingState(BaseState):
             # ========================================================================
             # TEMPORARY HACK: Compensate for calibration offsets
             # TODO: Remove after recalibrating hand-eye matrix with correct TCP
-            hand_pos_tcp[1] -= 0.064  # Subtract 64mm Y offset (camera to TCP)
+            # Hand-eye matrix already accounts for camera X/Y offset from TCP
             # Subtract 138mm Z offset (gripper extension)
             hand_pos_tcp[2] -= 0.138
             # ========================================================================

@@ -147,7 +147,8 @@ class Telemetry:
         now = time.time()
         with self._hand_tracking_lock:
             self._hand_tracking.camera_vector = list(vector)
-            detected = (vector != [0.0, 0.0, 0.0])
+            # Check if hand is detected (not all zeros)
+            detected = not np.allclose(vector, [0.0, 0.0, 0.0])
             self._hand_tracking.hand_detected = detected
 
             if detected:

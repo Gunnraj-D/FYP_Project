@@ -23,13 +23,14 @@ class PickupTaskSequencer(TaskSequencer):
     Task sequencer for object pickup operations.
 
     Sequence:
-    1. MoveToState(pose=PICKUP_LOCATION )
+    1. MoveToState(pose=PICKUP_LOCATION)
     2. GraspingState()
     3. GripperControlState(action='open')
     4. MoveToState(pose_from_telemetry='generated_approach_pose')
     5. MoveToState(pose_from_telemetry='generated_grasp_pose')
     6. GripperControlState(action='close')
     7. MoveToState(pose_from_telemetry='generated_approach_pose')
+    8. MoveToState(pose=PICKUP_LOCATION) - Return to start position
     """
 
     def __init__(self, state_machine: StateMachine, context: StateContext):
@@ -88,6 +89,10 @@ class PickupTaskSequencer(TaskSequencer):
         states.append(MoveToState(
             context, pose_from_telemetry='generated_approach_pose'))
 
+        # 8. Return to pickup location with object
+        states.append(MoveToState(
+            context, target_location=PICKUP_LOCATION["position"]))
+
         logger.info(
             "Created pickup sequence with {} states".format(len(states)))
         logger.info(
@@ -103,7 +108,8 @@ class PickupTaskSequencer(TaskSequencer):
             "4. Move to approach pose (above object)",
             "5. Move to grasp pose (grasp object)",
             "6. Close gripper",
-            "7. Lift object to approach pose"
+            "7. Lift object to approach pose",
+            "8. Return to pickup location"
         ]
 
     def get_current_step(self) -> int:

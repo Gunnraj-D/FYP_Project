@@ -297,3 +297,4 @@ Proceed to Phase 2 (multi-seed) only if real-world testing shows violations or p
 - New `solve_pose_iterative` is opt-in
 - No breaking changes to API
 
+

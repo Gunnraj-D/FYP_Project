@@ -121,3 +121,4 @@ print("  2. Verify the object detection depth values are reasonable (not too clo
 print("  3. Check if z_offset is being added in the grasping state")
 print("  4. Verify joint limits aren't being violated")
 
+

@@ -627,7 +627,7 @@ class DebugSystemManager:
                     self.context, target_location=(0.520, -0.055, 0.25))
             elif state_num == 2:
                 state = MoveToState(
-                    self.context, target_location=tuple(PICKUP_LOCATION['position']))
+                    self.context, target_location=(0.0, -.6, .25))
             elif state_num == 3:
                 state = GripperControlState(self.context, action='open')
             elif state_num == 4:

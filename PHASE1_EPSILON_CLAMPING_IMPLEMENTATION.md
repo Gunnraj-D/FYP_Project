@@ -232,3 +232,4 @@ Phase 1 provides **90%+ reduction in joint limit violations** with minimal code 
 
 The remaining ~1-2% violations will be handled by Phase 2 (multi-seed) and Phase 3 (projection-resolve) for near-perfect reliability.
 
+

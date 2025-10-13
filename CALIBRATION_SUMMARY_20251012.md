@@ -147,3 +147,4 @@ camera_point = np.linalg.inv(HAND_EYE_MATRIX) @ tcp_point_homogeneous
 **Sessions**: 20251012_233752, 20251012_234617  
 **Total poses**: 18 (15 best selected)
 
+

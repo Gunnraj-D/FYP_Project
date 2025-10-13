@@ -241,98 +241,85 @@ class CameraManager:
 
     def get_average_depth(self, depth_frame: rs.depth_frame,
                           center: Tuple[int, int], radius: int,
-                          min_valid_pixels: int = 5) -> float:
+                          min_valid_pixels: int = 5) -> Tuple[Optional[float], dict]:
         """
-        Get median depth in circular region with robust outlier rejection.
-
-        ALIGNMENT REQUIREMENT:
-            - depth_frame MUST be aligned to color (from get_frames())
-            - center coordinates MUST be in COLOR frame pixel coordinates
-            - The circular mask is drawn in depth frame coordinates, which after
-              alignment match the color frame coordinates 1:1
-
-        Uses caching to avoid repeated get_data() calls for the same frame,
-        significantly improving performance when called multiple times per frame.
-
-        Args:
-            depth_frame: RealSense depth frame (MUST be aligned to color via rs.align)
-            center: (x, y) center pixel coordinates in COLOR frame
-            radius: Radius in pixels for circular sampling region
-            min_valid_pixels: Minimum number of valid depth pixels required (default: 5)
+        Get depth statistics in circular ROI.
 
         Returns:
-            Median depth in meters, or 0.0 if insufficient valid data
+            (median_depth_m, quality) where quality is dict with:
+                - valid_ratio: fraction of ROI pixels with valid depth
+                - depth_std_m: std-dev of valid depths (meters)
+                - valid_count: number of valid pixels
+                - median_depth_m: median depth (meters) or None if no valid pixels
+        Notes:
+            - Robust to invalid (0) depth values.
+            - Uses percentile clipping (25-75) to ignore extreme tails within ROI.
         """
         try:
-            # Early validation of radius
-            if radius <= 0:
-                logger.debug(f"Invalid radius {radius}, returning 0.0")
-                return 0.0
+            # frame shape and units
+            # assumed uint16 or similar
+            depth_array = np.asanyarray(depth_frame.get_data())
+            h, w = depth_array.shape
+            depth_scale = depth_frame.get_units()
 
-            # Get frame metadata
-            frame_number = depth_frame.get_frame_number()
-            h, w = depth_frame.get_height(), depth_frame.get_width()
-            cx, cy = center
-
-            # Validate coordinates
-            if cx < 0 or cx >= w or cy < 0 or cy >= h:
-                logger.debug(
-                    f"Center ({cx}, {cy}) out of bounds ({w}x{h}), returning 0.0")
-                return 0.0
-
-            # Check cache and populate if necessary
-            if (self._depth_cache_frame_id != frame_number or
-                    self._depth_cache_array is None):
-                # Cache miss - convert frame data
-                self._depth_cache_array = np.asanyarray(depth_frame.get_data())
-                self._depth_cache_scale = depth_frame.get_units()
-                self._depth_cache_dims = (h, w)
-                self._depth_cache_frame_id = frame_number
-                logger.debug(f"Depth cache updated for frame {frame_number}")
-
-            # Use cached data
-            depth_image = self._depth_cache_array
-            depth_scale = self._depth_cache_scale
-
-            # Create circular mask
+            # build circular mask
             mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.circle(mask, (cx, cy), radius, 255, -1)
+            cx, cy = int(center[0]), int(center[1])
+            cv2.circle(mask, (cx, cy), int(radius), 255, -1)
 
-            # Extract valid depths in circular region
-            valid_depths = depth_image[mask == 255]
-            valid_depths = valid_depths[valid_depths > 0]
+            # Extract ROI depths (vectorized)
+            roi_depths = depth_array[mask == 255]
 
-            # Require minimum number of valid pixels
-            if valid_depths.size < min_valid_pixels:
-                logger.debug(
-                    f"Insufficient valid pixels at ({cx}, {cy}): "
-                    f"got {valid_depths.size}, need {min_valid_pixels}"
-                )
-                return 0.0
+            # Count and filter valid depths (>0)
+            valid_depths = roi_depths[roi_depths > 0]
+            valid_count = int(valid_depths.size)
+            total_count = int(roi_depths.size) if roi_depths.size > 0 else 0
+            valid_ratio = (
+                valid_count / total_count) if total_count > 0 else 0.0
 
-            # Use percentile clipping to reject outliers
-            # This helps when there are a few noisy depth readings
-            if valid_depths.size >= 10:
-                # For larger samples, use interquartile range (25th to 75th percentile)
-                # This is more robust than using all data
-                lower = np.percentile(valid_depths, 25)
-                upper = np.percentile(valid_depths, 75)
-                clipped_depths = valid_depths[(
-                    valid_depths >= lower) & (valid_depths <= upper)]
+            if valid_count == 0:
+                # No valid depth in ROI
+                quality = {
+                    "valid_ratio": valid_ratio,
+                    "depth_std_m": None,
+                    "valid_count": 0,
+                    "median_depth_m": None
+                }
+                return None, quality
 
-                # If clipping removes too much data, fall back to full dataset
-                if clipped_depths.size >= min_valid_pixels:
-                    valid_depths = clipped_depths
-                    logger.debug(
-                        f"Applied IQR clipping: {clipped_depths.size} pixels retained")
+            # convert to meters
+            valid_depths_m = valid_depths.astype(np.float32) * depth_scale
 
-            # Return median depth in meters
-            median_depth = np.median(valid_depths) * depth_scale
-            return median_depth
+            # percentile clipping to remove tails (robust to edges)
+            if valid_count >= 10:
+                lower = np.percentile(valid_depths_m, 25)
+                upper = np.percentile(valid_depths_m, 75)
+                clipped = valid_depths_m[(valid_depths_m >= lower) & (
+                    valid_depths_m <= upper)]
+                if clipped.size >= max(5, int(0.5 * valid_count)):
+                    valid_depths_m = clipped
+
+            median_depth_m = float(np.median(valid_depths_m))
+            depth_std_m = float(np.std(valid_depths_m))
+
+            quality = {
+                "valid_ratio": float(valid_ratio),
+                "depth_std_m": float(depth_std_m),
+                "valid_count": valid_count,
+                "median_depth_m": median_depth_m
+            }
+
+            return median_depth_m, quality
 
         except Exception as e:
             logger.error(f"Depth calculation error: {e}")
-            return 0.0
+            quality = {
+                "valid_ratio": 0.0,
+                "depth_std_m": None,
+                "valid_count": 0,
+                "median_depth_m": None
+            }
+            return None, quality
 
     def cleanup(self):
         """Clean up camera resources."""
