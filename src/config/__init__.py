@@ -91,6 +91,7 @@ from config.camera_config import (
 
 # Grasp detection configuration (including advanced features)
 from config.grasp_config import (
+    SIMPLE_GRASP_CONFIG,    # Simplified user-facing config
     GRASP_MODEL_TYPE,
     GRCONVNET_CONFIG,
     GRASP_DETECTION_CONFIG,
@@ -180,6 +181,7 @@ __all__ = [
     'print_camera_transform_info',
 
     # Grasp detection
+    'SIMPLE_GRASP_CONFIG',      # Simplified user-facing config
     'GRASP_MODEL_TYPE',
     'GRCONVNET_CONFIG',
     'GRASP_DETECTION_CONFIG',

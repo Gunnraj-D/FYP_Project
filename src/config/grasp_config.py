@@ -1,14 +1,49 @@
 """
-Grasp detection configuration - ADVANCED anti-tip system.
+Grasp detection configuration.
 
 Includes all settings for:
 - GR-ConvNet / GGCNN2 models
-- Advanced postprocessing (anti-tip fixes)
+- Advanced postprocessing
 - Temporal filtering
 - Multi-factor scoring
 - PCA angle correction
 - Gripper specifications
 """
+
+# ============================================================================
+# SIMPLIFIED GRASP CONFIGURATION (User-Facing)
+# ============================================================================
+# For most users, these are the ONLY parameters you need to tune.
+# Advanced parameters are set to sensible defaults below.
+
+SIMPLE_GRASP_CONFIG = {
+    # Quality control
+    'quality_threshold': 0.10,           # Minimum grasp quality [0-1]
+
+    # Width calibration (object-specific!)
+    # IMPORTANT: Calibrate for your objects (80-110 typical)
+    # Formula: new = old * (actual_width_mm / logged_width_mm)
+    # Example: 30mm screwdriver shows 25mm → new = 95 * (30/25) = 114
+    'width_multiplier': 95.0,            # Calibrate using real objects
+    'width_range_mm': (20, 100),         # Valid width range in mm
+    # Optimal gripper range (Robotiq 2F-85)
+    'gripper_optimal_mm': (15, 60),
+
+    # Quality filters
+    # Higher overlap = fewer bad grasps but harder to find grasps
+    # Lower overlap = more grasps found but some may be unstable
+    # Guidelines: Flat objects (0.3-0.4), Cylindrical (0.25-0.3), Small (0.2-0.25)
+    'min_object_overlap': 0.25,          # Overlap with object mask [0-1]
+    'avoid_borders': True,               # Penalize grasps near image borders
+
+    # Temporal filtering (reduce jitter)
+    'temporal_smoothing': True,          # Enable angle smoothing
+    'temporal_window': 5,                # Number of frames to average (3-7)
+
+    # Angle correction
+    # Fixes 90° rotation errors on cylindrical objects
+    'pca_angle_correction': True,        # Enable PCA-based correction
+}
 
 # ============================================================================
 # MODEL SELECTION
@@ -182,3 +217,72 @@ OBJECT_PROFILES = {
         'bg_percentile': 82,
     },
 }
+
+# ============================================================================
+# CONFIGURATION GUIDE
+# ============================================================================
+"""
+Quick Tuning Guide for SIMPLE_GRASP_CONFIG:
+
+1. START HERE:
+   - Use SIMPLE_GRASP_CONFIG for 90% of use cases
+   - Only change width_multiplier and min_object_overlap initially
+   - Leave other parameters at defaults until you understand the system
+
+2. WIDTH CALIBRATION (Most Important!):
+   Step 1: Grasp a known object with calipers measurement
+   Step 2: Check logged width in terminal (e.g., "width=25.0mm")
+   Step 3: Calculate new multiplier: new = old * (actual_width / logged_width)
+   Step 4: Update 'width_multiplier' in SIMPLE_GRASP_CONFIG
+   
+   Example:
+   - Actual screwdriver: 30mm (measured with calipers)
+   - Logged width: 25mm (from system output)
+   - New multiplier: 95 * (30/25) = 114
+   - Update: 'width_multiplier': 114.0
+
+3. OVERLAP TUNING (Quality Control):
+   Too many bad grasps (tips, edges)?
+   → Increase 'min_object_overlap' to 0.30-0.40
+   
+   Too few grasps found?
+   → Decrease 'min_object_overlap' to 0.15-0.20
+   
+   Guidelines by object type:
+   - Flat objects (books, boxes): 0.30-0.40
+   - Cylindrical objects (screwdrivers, markers): 0.25-0.30
+   - Small objects (USB drives, batteries): 0.20-0.25
+
+4. TEMPORAL SMOOTHING (Jitter Reduction):
+   Robot movements jittery or unstable?
+   → Increase 'temporal_window' to 7-10 frames
+   
+   Robot too slow to react to changes?
+   → Decrease 'temporal_window' to 3-5 frames
+   
+   Best practice: Start with 5, only change if needed
+
+5. OBJECT PROFILES (Advanced):
+   Once you find working settings for an object:
+   - Save them in OBJECT_PROFILES dictionary
+   - Switch profiles based on task or detected object type
+   - Reuse successful configurations
+
+6. WHEN TO MODIFY ADVANCED SETTINGS:
+   Most users should NEVER touch GRASP_DETECTION_CONFIG directly.
+   Only modify if:
+   - You understand the technical details
+   - SIMPLE_GRASP_CONFIG doesn't provide enough control
+   - You're debugging specific issues (e.g., NMS, PCA)
+
+For debugging and visualization:
+- Set DEBUG_MODE = True in system_config.py
+- Check terminal logs for quality, overlap, width values
+- Use visualization windows to see selected grasps
+
+Common Issues:
+- "No valid grasp found" → Lower min_object_overlap or quality_threshold
+- "Grasp at tip" → Increase min_object_overlap
+- "Width too large/small" → Recalibrate width_multiplier
+- "Jittery angles" → Increase temporal_window
+"""

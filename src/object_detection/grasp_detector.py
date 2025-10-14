@@ -1,18 +1,17 @@
 """
-ADVANCED grasp detector module - orchestrates the grasp detection pipeline.
+Grasp detector module - orchestrates the grasp detection pipeline.
 
-Major improvements from legacy:
-1. Uses advanced preprocessing (per-channel RGB, percentile depth)
-2. Uses advanced postprocessing (anti-tip fixes, multi-factor scoring)
-3. Passes depth map for local depth estimation
-4. Camera intrinsics integration
-5. PCA-based angle correction
-6. Sophisticated grasp selection
+Features:
+1. Per-channel RGB and percentile-based depth preprocessing
+2. Multi-factor scoring with temporal filtering
+3. Local depth estimation with camera intrinsics
+4. PCA-based angle correction
+5. Advanced candidate selection
 
-This is a lightweight wrapper that coordinates:
-- Preprocessing (grasp_preprocessing.py) - IMPROVED
+Pipeline components:
+- Preprocessing (grasp_preprocessing.py)
 - Network inference (ggcnn2.py or grconvnet.py)
-- Postprocessing (grasp_postprocessing.py) - COMPLETELY REWRITTEN
+- Postprocessing (grasp_postprocessing.py)
 - Coordinate transformations (grasp_transforms.py)
 - Visualization (grasp_visualization.py)
 """
@@ -33,9 +32,9 @@ from kinematics.kinematics_solver import InverseKinematicsSolver
 from object_detection.ggcnn2 import GGCNN2
 from object_detection.grconvnet import GRConvNet
 
-# Import refactored modules (ADVANCED versions)
+# Import refactored modules
 from object_detection.grasp_preprocessing import GraspPreprocessor
-from object_detection.grasp_postprocessing import GraspPostprocessor, TemporalAngleFilter
+from object_detection.postprocessing import GraspPostprocessor, TemporalAngleFilter
 from object_detection.grasp_transforms import GraspTransformer
 from object_detection.grasp_visualization import GraspVisualizer
 
@@ -50,12 +49,12 @@ logger = logging.getLogger(__name__)
 
 class GraspDetector:
     """
-    ADVANCED grasp detector with anti-tip fixes.
+    Grasp detector with temporal filtering and multi-factor scoring.
 
     Pipeline:
-    1. Preprocess: depth/RGB-D → tensor (+ depth map in meters, median depth)
+    1. Preprocess: depth/RGB-D → tensor with depth map and median depth
     2. Inference: network → quality, angle, width maps
-    3. Postprocess: ADVANCED candidate selection with:
+    3. Postprocess: candidate selection with:
        - Local depth estimation
        - Object mask overlap
        - Border penalties
@@ -66,16 +65,16 @@ class GraspDetector:
 
     Supports both GGCNN2 (depth-only) and GR-ConvNet (RGB-D).
 
-    CALIBRATED FOR SCREWDRIVERS (30mm handle):
-    - Width multiplier: 95.0 (set in config)
-    - Min overlap: 0.25 (set in config)
+    Default calibration (screwdrivers):
+    - Width multiplier: 95.0
+    - Min overlap: 0.25
     - PCA angle correction: Enabled
     """
 
     def __init__(self, model_path: str, telemetry: Telemetry, command_bus: CommandBus,
                  camera_manager: CameraManager, kinematics_solver: InverseKinematicsSolver):
         """
-        Initialize ADVANCED grasp detector.
+        Initialize grasp detector.
 
         Args:
             model_path: Path to model weights (overridden by config)
@@ -106,7 +105,7 @@ class GraspDetector:
         # Initialize model
         self.model = self._load_model()
 
-        # Initialize ADVANCED pipeline components
+        # Initialize pipeline components
         self.preprocessor = GraspPreprocessor(
             model_type=self.model_type,
             resize_size=self.resize_size,
@@ -138,11 +137,11 @@ class GraspDetector:
         self.visualizer = GraspVisualizer(enabled=DEBUG_MODE)
 
         logger.info(
-            f"✅ ADVANCED {self.model_type.upper()} grasp detector initialized")
-        logger.info(f"   Input: {'RGB-D (4ch, per-channel norm)' if self.use_rgbd else 'Depth (1ch)'}, "
+            f"{self.model_type.upper()} grasp detector initialized")
+        logger.info(f"Input: {'RGB-D' if self.use_rgbd else 'Depth'}, "
                     f"Size: {self.resize_size}x{self.resize_size}")
-        logger.info(
-            f"   Anti-tip fixes: Local depth, NMS, Overlap, PCA angles, Multi-factor scoring")
+        logger.debug(
+            f"Features: temporal_filter, PCA_correction, multi_factor_scoring")
 
     def _load_model(self) -> torch.nn.Module:
         """Load and initialize grasp detection model."""
@@ -201,7 +200,7 @@ class GraspDetector:
                 logger.warning("No valid grasp found")
                 return None
 
-            logger.info(f"✅ ADVANCED grasp detected: quality={grasp_result['quality']:.3f}, "
+            logger.info(f"Grasp detected: quality={grasp_result['quality']:.3f}, "
                         f"angle={np.degrees(grasp_result.get('angle', 0)):.1f}°, "
                         f"width={grasp_result.get('width_m', 0)*1000:.1f}mm, "
                         f"overlap={grasp_result.get('object_overlap', 0):.2f}")
@@ -215,7 +214,7 @@ class GraspDetector:
     def infer(self, depth_image: np.ndarray, original_depth_frame=None,
               color_image: Optional[np.ndarray] = None) -> Optional[Dict]:
         """
-        Run full ADVANCED inference pipeline.
+        Run full inference pipeline.
 
         Args:
             depth_image: Depth array in meters (H, W)
@@ -230,7 +229,7 @@ class GraspDetector:
             self.visualizer.visualize_input_frame(
                 depth_image, f"{self.model_type.upper()} Input")
 
-            # 1. ADVANCED Preprocess (returns depth map + median depth)
+            # 1. Preprocess (returns depth map + median depth)
             input_tensor, depth_resized_m, median_depth_m = self.preprocessor.preprocess(
                 depth_image, color_image)
 
@@ -252,7 +251,7 @@ class GraspDetector:
             else:
                 width_img = F.relu(width)  # GGCNN2: direct pixel width
 
-            # 4. ADVANCED Postprocess: anti-tip candidate selection
+            # 4. Postprocess: candidate selection
             grasp_2d = self.postprocessor.postprocess(
                 q_img, ang_img, width_img,
                 depth_image=depth_resized_m,  # Pass depth map for local depth
@@ -261,7 +260,7 @@ class GraspDetector:
 
             if grasp_2d is None:
                 logger.warning(
-                    "No valid grasp candidate found (advanced filtering)")
+                    "No valid grasp candidate found")
                 return None
 
             # Log selected grasp with advanced metrics
@@ -275,7 +274,7 @@ class GraspDetector:
 
             # Visualize grasp output
             self.visualizer.visualize_grasp_output(
-                depth_image, grasp_2d, "ADVANCED Grasp Output")
+                depth_image, grasp_2d, "Grasp Output")
 
             # 5. Transform to 3D and base frame
             grasp_result = self._transform_grasp_to_base(
@@ -349,7 +348,7 @@ class GraspDetector:
     def cleanup(self):
         """Clean up resources (e.g., visualization windows)."""
         self.visualizer.cleanup()
-        logger.info("ADVANCED grasp detector cleanup complete")
+        logger.info("Grasp detector cleanup complete")
 
 
 # Backward compatibility: Alias for existing code

@@ -1,15 +1,15 @@
 """
-ADVANCED Image preprocessing for grasp detection networks.
+Image preprocessing for grasp detection networks.
 
-Major improvements from legacy version:
-1. Per-channel RGB normalization (better than global mean)
-2. Percentile-based depth normalization (preserves gradients)
+Features:
+1. Per-channel RGB normalization
+2. Percentile-based depth normalization
 3. Returns depth map in meters for local depth estimation
 4. Camera intrinsics support for accurate scaling
 
 Handles preprocessing for both:
 - GGCNN2: Depth-only (1 channel)
-- GR-ConvNet: RGB-D (4 channels) with improved normalization
+- GR-ConvNet: RGB-D (4 channels)
 """
 
 import cv2
@@ -23,17 +23,17 @@ logger = logging.getLogger(__name__)
 
 class GraspPreprocessor:
     """
-    ADVANCED preprocessor for grasp detection networks.
+    Preprocessor for grasp detection networks.
 
-    Improvements over legacy:
-    - Per-channel RGB normalization (not global mean)
+    Features:
+    - Per-channel RGB normalization
     - Percentile-based depth normalization (robust to outliers)
     - Returns depth map for local depth queries
     - Camera intrinsics-aware
 
     Supports model-specific preprocessing:
     - GGCNN2: Depth normalization to [0,1] range
-    - GR-ConvNet: RGB-D with improved normalization
+    - GR-ConvNet: RGB-D normalization
     """
 
     def __init__(self, model_type: str, resize_size: int = 300, device: str = 'cpu'):
@@ -48,16 +48,16 @@ class GraspPreprocessor:
         self.device = device
         self.use_rgbd = (model_type == 'grconvnet')
 
-        logger.info(f"✨ ADVANCED {model_type.upper()} preprocessor initialized: "
+        logger.info(f"{model_type.upper()} preprocessor initialized: "
                     f"input_size={resize_size}, "
-                    f"mode={'RGB-D (per-channel norm)' if self.use_rgbd else 'Depth-only'}")
+                    f"mode={'RGB-D' if self.use_rgbd else 'Depth'}")
 
     def preprocess(self, depth_image: np.ndarray,
                    color_image: Optional[np.ndarray] = None) -> Tuple[torch.Tensor, np.ndarray, float]:
         """
         Preprocess depth (and optionally color) for network inference.
 
-        IMPROVED: Now returns depth map in meters and median depth for
+        Returns depth map in meters and median depth for
         local depth estimation and accurate mm conversion.
 
         Args:
