@@ -1,0 +1,311 @@
+<?xml version="1.0"?>
+<robot name="iiwa14">
+
+  <!-- Materials -->
+  <material name="Grey">
+    <color rgba="0.4 0.4 0.4 1.0"/>
+  </material>
+
+  <material name="Orange">
+    <color rgba="1.0 0.4235294117647059 0.0392156862745098 1.0"/>
+  </material>
+
+  <!-- Link 0 (Base) -->
+  <link name="link_0">
+    <inertial>
+      <origin xyz="-0.1 0 0.07" rpy="0 0 0"/>
+      <mass value="5"/>
+      <inertia ixx="0.05" ixy="0" ixz="0" iyy="0.06" iyz="0" izz="0.03"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_0.stl"/>
+      </geometry>
+      <material name="Grey"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_0_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint 0 -->
+  <joint name="joint_0" type="revolute">
+    <parent link="link_0"/>
+    <child link="link_1"/>
+    <origin xyz="0 0 0.1575" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.9670597283903604" upper="2.9670597283903604" effort="300" velocity="10"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+
+  <!-- Link 1 -->
+  <link name="link_1">
+    <inertial>
+      <origin xyz="0 -0.03 0.12" rpy="0 0 0"/>
+      <mass value="4"/>
+      <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.09" iyz="0" izz="0.02"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_1.stl"/>
+      </geometry>
+      <material name="Orange"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_1_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint 1 -->
+  <joint name="joint_1" type="revolute">
+    <parent link="link_1"/>
+    <child link="link_2"/>
+    <origin xyz="0 0 0.2025" rpy="1.5707963267948966 0 3.141592653589793"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.0943951023931953" upper="2.0943951023931953" effort="300" velocity="10"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+
+  <!-- Link 2 -->
+  <link name="link_2">
+    <inertial>
+      <origin xyz="0.0003 0.059 0.042" rpy="0 0 0"/>
+      <mass value="4"/>
+      <inertia ixx="0.05" ixy="0" ixz="0" iyy="0.018" iyz="0" izz="0.044"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_2.stl"/>
+      </geometry>
+      <material name="Orange"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_2_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint 2 -->
+  <joint name="joint_2" type="revolute">
+    <parent link="link_2"/>
+    <child link="link_3"/>
+    <origin xyz="0 0.2045 0" rpy="1.5707963267948966 0 3.141592653589793"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.9670597283903604" upper="2.9670597283903604" effort="300" velocity="10"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+
+  <!-- Link 3 -->
+  <link name="link_3">
+    <inertial>
+      <origin xyz="0 0.03 0.13" rpy="0 0 0"/>
+      <mass value="3"/>
+      <inertia ixx="0.08" ixy="0" ixz="0" iyy="0.075" iyz="0" izz="0.01"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_3.stl"/>
+      </geometry>
+      <material name="Orange"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_3_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint 3 -->
+  <joint name="joint_3" type="revolute">
+    <parent link="link_3"/>
+    <child link="link_4"/>
+    <origin xyz="0 0 0.2155" rpy="1.5707963267948966 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.0943951023931953" upper="2.0943951023931953" effort="300" velocity="10"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+
+  <!-- Link 4 -->
+  <link name="link_4">
+    <inertial>
+      <origin xyz="0 0.067 0.034" rpy="0 0 0"/>
+      <mass value="2.7"/>
+      <inertia ixx="0.03" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.029"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_4.stl"/>
+      </geometry>
+      <material name="Orange"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_4_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint 4 -->
+  <joint name="joint_4" type="revolute">
+    <parent link="link_4"/>
+    <child link="link_5"/>
+    <origin xyz="0 0.1845 0" rpy="-1.5707963267948966 3.141592653589793 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.9670597283903604" upper="2.9670597283903604" effort="300" velocity="10"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+
+  <!-- Link 5 -->
+  <link name="link_5">
+    <inertial>
+      <origin xyz="0.0001 0.021 0.076" rpy="0 0 0"/>
+      <mass value="1.7"/>
+      <inertia ixx="0.02" ixy="0" ixz="0" iyy="0.018" iyz="0" izz="0.005"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_5.stl"/>
+      </geometry>
+      <material name="Orange"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_5_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint 5 -->
+  <joint name="joint_5" type="revolute">
+    <parent link="link_5"/>
+    <child link="link_6"/>
+    <origin xyz="0 0 0.2155" rpy="1.5707963267948966 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.0943951023931953" upper="2.0943951023931953" effort="300" velocity="10"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+
+  <!-- Link 6 -->
+  <link name="link_6">
+    <inertial>
+      <origin xyz="0 0.0006 0.0004" rpy="0 0 0"/>
+      <mass value="1.8"/>
+      <inertia ixx="0.025" ixy="0" ixz="0" iyy="0.0136" iyz="0" izz="0.0247"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_6.stl"/>
+      </geometry>
+      <material name="Orange"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_6_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint 6 -->
+  <joint name="joint_6" type="revolute">
+    <parent link="link_6"/>
+    <child link="link_7"/>
+    <origin xyz="0 0.081 0" rpy="-1.5707963267948966 3.141592653589793 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.0543261907583127" upper="3.0543261907583127" effort="300" velocity="10"/>
+    <dynamics damping="0" friction="0"/>
+  </joint>
+
+  <!-- Link 7 (Flange) -->
+  <link name="link_7">
+    <inertial>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <mass value="0.42857142857142855"/>
+      <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_7-MF-Touch-pneumatisch.stl"/>
+      </geometry>
+      <material name="Grey"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_7-MF-Touch-pneumatisch_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Fixed joint to end-effector -->
+  <joint name="joint_ee" type="fixed">
+    <parent link="link_7"/>
+    <child link="link_ee"/>
+    <origin xyz="0 0 0.045" rpy="0 -1.5707963267948966 0"/>
+  </joint>
+
+  <link name="link_ee"/>
+
+  <!-- TCP link for PyBullet solver compatibility (gripper tip reference) -->
+  <joint name="link_ee_to_tcp" type="fixed">
+    <parent link="link_ee"/>
+    <child link="tcp"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>  <!-- Zero offset; adjust if gripper added later -->
+  </joint>
+
+  <link name="tcp"/>
+
+  <!-- Alternative EE for KUKA -->
+  <joint name="joint_ee_kuka" type="fixed">
+    <parent link="link_7"/>
+    <child link="link_ee_kuka"/>
+    <origin xyz="0 0 0.045" rpy="3.141592653589793 3.141592653589793 3.141592653589793"/>
+  </joint>
+
+  <link name="link_ee_kuka"/>
+
+  <!-- Alternative for MFT Pneum -->
+  <joint name="joint_ee_kuka_mft_pneum" type="fixed">
+    <parent link="link_7"/>
+    <child link="link_ee_kuka_mft_pneum"/>
+    <origin xyz="0 0 0.071" rpy="0 -1.5707963267948966 0"/>
+  </joint>
+
+  <link name="link_ee_kuka_mft_pneum"/>
+
+</robot>

@@ -167,10 +167,22 @@ class HumanHandoffApproachState(BaseState):
 
         # 4. Execute current trajectory
         if self.trajectory is None or self.waypoint_index >= len(self.trajectory):
-            # Trajectory complete but not at target - replan
-            logger.info("Trajectory complete but not at target - replanning")
-            self._plan_trajectory_to_target(is_initial=False)
-            return
+            # Trajectory complete - check if we've reached target
+            if self._check_if_reached_target():
+                logger.info("Trajectory complete and target reached!")
+                self._complete_motion()
+                return
+
+            # Not at target yet - check if target moved significantly
+            if self._should_replan_for_target_update():
+                logger.info("Trajectory complete, target moved - replanning")
+                self._plan_trajectory_to_target(is_initial=False)
+                return
+            else:
+                # Target hasn't moved much - we're close enough, complete
+                logger.info("Trajectory complete, target stable - completing")
+                self._complete_motion()
+                return
 
         # 5. Validate current trajectory segment is still safe
         remaining_trajectory = self.trajectory[self.waypoint_index:]
@@ -180,9 +192,23 @@ class HumanHandoffApproachState(BaseState):
 
         if not is_safe:
             logger.warning(
-                f"Trajectory unsafe (clearance: {clearance:.3f}m) - stopping!")
-            self._stop_for_safety()
-            return
+                f"Trajectory unsafe (clearance: {clearance:.3f}m) - human moved into path!")
+            logger.info("Replanning to avoid new obstacle position...")
+
+            # Try to replan around the obstacle
+            self._plan_trajectory_to_target(is_initial=False)
+
+            if self.trajectory is None:
+                # Replanning failed - no safe path exists
+                logger.error("Cannot find safe path around human - stopping!")
+                self._stop_for_safety()
+                return
+            else:
+                # Successfully replanned - reset to start of new trajectory
+                logger.info(
+                    f"Replanned around obstacle: {len(self.trajectory)} waypoints")
+                self.waypoint_index = 0
+                return
 
         # 6. Compute speed scaling based on clearance
         speed_scale = self._compute_speed_scale(clearance)
@@ -297,8 +323,10 @@ class HumanHandoffApproachState(BaseState):
         # If hand has moved significantly, replan
         # For now, replan if we've received multiple target updates
         # TODO: Could be more sophisticated - track target velocity, predict position
+        # With smoothing enabled, we can tolerate more updates before replanning
 
-        return self.target_update_count > 5  # Replan every 5 hand updates
+        # Replan every 10 hand updates (was 5)
+        return self.target_update_count > 10
 
     def _check_if_reached_target(self) -> bool:
         """Check if robot has reached the approach position."""
@@ -333,12 +361,27 @@ class HumanHandoffApproachState(BaseState):
         # Get current robot state
         current_joints = self.context.telemetry.get_current_joints()
 
-        # Use target position (orientation will be computed by planner)
-        from kinematics.kinematics_solver import get_facing_down_orientation
-        target_orientation = get_facing_down_orientation()
+        # Get current TCP orientation to extract Z-rotation
+        from kinematics.kinematics_solver import get_facing_down_orientation_with_z_rotation
+        from scipy.spatial.transform import Rotation as R
+
+        # Get current TCP pose using IK solver
+        _, current_tcp_pose = self.context.ik.tcp_from_joints(current_joints)
+        current_orientation = R.from_euler('xyz', current_tcp_pose[3:])
+
+        # Extract current Z-rotation (yaw) to maintain it
+        # This prevents unnecessary spinning around the tool axis
+        current_euler = current_orientation.as_euler('xyz')
+        current_z_rotation = current_euler[2]  # Yaw angle
+
+        logger.debug(
+            f"Maintaining current Z-rotation: {np.degrees(current_z_rotation):.1f}°")
+
+        # Create facing-down orientation with current Z-rotation preserved
+        target_orientation = get_facing_down_orientation_with_z_rotation(
+            current_z_rotation)
 
         # Convert to pose format
-        from scipy.spatial.transform import Rotation as R
         euler = R.from_matrix(target_orientation).as_euler('xyz')
         target_pose = list(self.current_target_position) + list(euler)
 

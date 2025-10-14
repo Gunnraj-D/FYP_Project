@@ -71,7 +71,8 @@ from config.robot_config import (
     ERROR_RECOVERY_CONFIG,
     PATH_PLANNING_CONFIG,
     HUMAN_MODEL_CONFIG,
-    TRACKED_HUMAN_JOINTS
+    TRACKED_HUMAN_JOINTS,
+    ZED_MANUAL_OFFSET
 )
 
 # Camera configuration
@@ -164,6 +165,7 @@ __all__ = [
     'PATH_PLANNING_CONFIG',
     'HUMAN_MODEL_CONFIG',
     'TRACKED_HUMAN_JOINTS',
+    'ZED_MANUAL_OFFSET',
 
     # Camera
     'CAMERA_TRANSLATION',

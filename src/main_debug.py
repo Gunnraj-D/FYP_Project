@@ -173,10 +173,14 @@ class DebugSystemManager:
             # Initialize ZED receiver (optional - for human-aware planning)
             try:
                 self.zed_receiver = ZEDJointReceiver(
-                    host='127.0.0.1', port=5005)
+                    host='0.0.0.0',
+                    port=5005,
+                    smoothing_factor=0.3,        # 0-1: higher = less smooth, more responsive
+                    tracking_loss_frames=5       # Tolerate 5 frames of tracking loss
+                )
                 self.zed_receiver.start()
                 logger.info(
-                    "✅ ZED Joint Receiver started (waiting for Unity connection)")
+                    "✅ ZED Joint Receiver started (smoothing: 0.3, loss tolerance: 5 frames)")
             except Exception as e:
                 logger.warning(f"⚠️ ZED receiver not started: {e}")
                 self.zed_receiver = None

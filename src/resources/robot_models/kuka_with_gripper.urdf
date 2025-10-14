@@ -1,24 +1,182 @@
 <?xml version="1.0"?>
 <robot name="kuka_iiwa_with_robotiq_gripper">
 
-  <link name="base_link"/>
-  <link name="link_1"/>
-  <link name="link_2"/>
-  <link name="link_3"/>
-  <link name="link_4"/>
-  <link name="link_5"/>
-  <link name="link_6"/>
-  <link name="link_7"/>
+  <!-- Base link (platform) -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.1" radius="0.1"/>
+      </geometry>
+      <material name="grey">
+        <color rgba="0.5 0.5 0.5 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder length="0.1" radius="0.1"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Link 1 (base to shoulder, 0.36m tall) -->
+  <link name="link_1">
+    <visual>
+      <origin xyz="0 0 0.18" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.36" radius="0.06"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1.0 0.5 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.18" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.36" radius="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Link 2 (shoulder joint housing) -->
+  <link name="link_2">
+    <visual>
+      <geometry>
+        <sphere radius="0.07"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1.0 0.5 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="0.07"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Link 3 (upper arm, 0.42m tall) -->
+  <link name="link_3">
+    <visual>
+      <origin xyz="0 0 0.21" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.42" radius="0.06"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1.0 0.5 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.21" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.42" radius="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Link 4 (elbow joint housing) -->
+  <link name="link_4">
+    <visual>
+      <geometry>
+        <sphere radius="0.07"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1.0 0.5 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="0.07"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Link 5 (forearm, 0.4m tall) -->
+  <link name="link_5">
+    <visual>
+      <origin xyz="0 0 0.2" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.4" radius="0.05"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1.0 0.5 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.2" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.4" radius="0.05"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Link 6 (wrist joint housing) -->
+  <link name="link_6">
+    <visual>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+      <material name="orange">
+        <color rgba="1.0 0.5 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Link 7 (flange, 0.126m to tool0) -->
+  <link name="link_7">
+    <visual>
+      <origin xyz="0 0 0.063" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.126" radius="0.04"/>
+      </geometry>
+      <material name="grey">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.063" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.126" radius="0.04"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Tool center point (just a reference frame) -->
   <link name="tool0"/>
-  <link name="robotiq_85_base_link"/>
+
+  <!-- Gripper base -->
+  <link name="robotiq_85_base_link">
+    <visual>
+      <origin xyz="0 0 0.069" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.08 0.08 0.138"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.069" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.08 0.08 0.138"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- TCP (tool center point for gripper) -->
   <link name="tcp"/>
 
+  <!-- Joints (unchanged from your original) -->
   <joint name="joint_a1" type="revolute">
     <origin rpy="0 0 0" xyz="0 0 0"/>
     <parent link="base_link"/>
     <child link="link_1"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.9668" upper="2.9668"/>
+    <limit lower="-2.9668" upper="2.9668" effort="300" velocity="1.7"/>
   </joint>
 
   <joint name="joint_a2" type="revolute">
@@ -26,7 +184,7 @@
     <parent link="link_1"/>
     <child link="link_2"/>
     <axis xyz="0 1 0"/>
-    <limit lower="-2.0942" upper="2.0942"/>
+    <limit lower="-2.0942" upper="2.0942" effort="300" velocity="1.7"/>
   </joint>
 
   <joint name="joint_a3" type="revolute">
@@ -34,7 +192,7 @@
     <parent link="link_2"/>
     <child link="link_3"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.9668" upper="2.9668"/>
+    <limit lower="-2.9668" upper="2.9668" effort="300" velocity="1.7"/>
   </joint>
 
   <joint name="joint_a4" type="revolute">
@@ -42,7 +200,7 @@
     <parent link="link_3"/>
     <child link="link_4"/>
     <axis xyz="0 -1 0"/>
-    <limit lower="-2.0942" upper="2.0942"/>
+    <limit lower="-2.0942" upper="2.0942" effort="300" velocity="1.7"/>
   </joint>
 
   <joint name="joint_a5" type="revolute">
@@ -50,7 +208,7 @@
     <parent link="link_4"/>
     <child link="link_5"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.9668" upper="2.9668"/>
+    <limit lower="-2.9668" upper="2.9668" effort="300" velocity="1.7"/>
   </joint>
 
   <joint name="joint_a6" type="revolute">
@@ -58,7 +216,7 @@
     <parent link="link_5"/>
     <child link="link_6"/>
     <axis xyz="0 1 0"/>
-    <limit lower="-2.0942" upper="2.0942"/>
+    <limit lower="-2.0942" upper="2.0942" effort="300" velocity="1.7"/>
   </joint>
 
   <joint name="joint_a7" type="revolute">
@@ -66,7 +224,7 @@
     <parent link="link_6"/>
     <child link="link_7"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-3.0541" upper="3.0541"/>
+    <limit lower="-3.0541" upper="3.0541" effort="300" velocity="1.7"/>
   </joint>
 
   <joint name="joint_a7_tool0" type="fixed">
