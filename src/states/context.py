@@ -4,7 +4,7 @@ from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager
 from IO_handling.opc_client import OPCClient
-from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
+from kinematics.kinematics_solver import InverseKinematicsSolver
 from typing import Optional
 
 
@@ -14,6 +14,6 @@ class StateContext:
     commands: CommandBus
     camera: CameraManager
     opc: OPCClient
-    ik: CollisionAwareKinematicsSolver
+    ik: InverseKinematicsSolver
     hand_tracker: Optional[object] = None
     zed_receiver: Optional[object] = None  # ZED skeleton tracking receiver

@@ -55,6 +55,10 @@ JOINT_LIMITS = {
     'A7': {'min': -3.054, 'max': 3.054},    # ±175°
 }
 
+# IK Solver Configuration
+# Safety margin in degrees to prevent numerical overshoot at joint limits (0.014 rad)
+IK_EPSILON_MARGIN_DEG = 0.8
+
 # ============================================================================
 # GRIPPER CONFIGURATION
 # ============================================================================
@@ -146,24 +150,35 @@ ERROR_RECOVERY_CONFIG = {
 PATH_PLANNING_CONFIG = {
     # Planner algorithm
     'planner_type': 'rrt_connect',     # 'rrt_connect', 'birrt', 'prm'
+    # Number of joints to plan for (7-DOF arm)
+    'planning_dof': 7,
+    # Use GUI mode for debugging (False = DIRECT mode)
+    'planning_gui': False,
+    'check_self_collision': False,     # Enable self-collision checking
     'step_size': 0.15,                 # Joint space step size (radians)
     'goal_bias': 0.3,                  # Probability of sampling goal
     'max_iterations': 2000,            # Maximum planning iterations
     'planning_timeout': 0.5,           # Initial planning timeout (seconds)
     'replan_timeout': 0.1,             # Replanning timeout (seconds)
-    'smoothing_iterations': 20,        # Post-processing smoothing passes
+    # Post-processing smoothing passes (reduced from 20 for safety)
+    'smoothing_iterations': 10,
 
     # Rolling horizon
     'horizon_time': 0.5,               # Plan ahead time (seconds)
-    'min_replan_interval': 0.5,        # Minimum time between replans (seconds)
-    'replan_threshold_position': 0.10,  # Replan if human moves >10cm
+    # Minimum time between replans (seconds) - INCREASED to reduce jitter
+    'min_replan_interval': 1.0,
+    # Replan if human moves >15cm - INCREASED to reduce jitter
+    'replan_threshold_position': 0.15,
     'replan_threshold_velocity': 0.30,  # Replan if human speed >0.3m/s
 
     # SSM (Speed and Separation Monitoring) zones per ISO/TS 15066
-    'comfort_distance': 0.50,          # ≥0.5m: normal speed (100%)
-    'warning_distance': 0.30,          # ≥0.3m: reduced speed (50-100%)
-    'hard_min_distance': 0.12,         # ≥0.12m: critical/stop (0-50%)
-    'emergency_stop_distance': 0.08,   # <0.08m: immediate stop
+    # INCREASED for real-world safety - robot maintains larger distance
+    'comfort_distance': 0.60,          # ≥0.6m: normal speed (100%) - was 0.5m
+    # ≥0.4m: reduced speed (50-100%) - was 0.3m
+    'warning_distance': 0.40,
+    # ≥0.2m: critical/stop (0-50%) - was 0.12m
+    'hard_min_distance': 0.20,
+    'emergency_stop_distance': 0.15,   # <0.15m: immediate stop - was 0.08m
 
     # Speed scaling
     'speed_scale_comfort': 1.0,        # 100% speed in comfort zone
@@ -189,11 +204,28 @@ PATH_PLANNING_CONFIG = {
 # ============================================================================
 
 HUMAN_MODEL_CONFIG = {
-    # Primitive radii (inflated for safety margin)
-    'head_radius': 0.10,               # 100mm sphere at NECK/NOSE
-    'torso_radius': 0.08,              # 80mm capsule
-    'arm_radius': 0.05,                # 50mm capsule
-    'shoulder_radius': 0.07,           # 70mm sphere
+    # Primitive radii following ISO/TS 15066 Speed and Separation Monitoring (SSM)
+    # Guidelines: Minimum protective separation = 150mm for collaborative operations
+    # Formula: radius = actual_body_part_size + safety_margin
+    #
+    # Actual human dimensions (95th percentile male):
+    #   - Head: ~100mm radius
+    #   - Torso: ~150mm radius
+    #   - Upper arm: ~50mm radius
+    #   - Shoulder: ~70mm radius
+    #
+    # Safety margins applied:
+    #   - Static parts (head/torso): +100mm (ISO minimum)
+    #   - Dynamic parts (arms): +100mm (ISO minimum, arms move fastest)
+    #   - Shoulders: +100mm (high-risk articulation point)
+
+    # 200mm = 100mm head + 100mm safety (ISO compliant)
+    'head_radius': 0.20,
+    # 250mm = 150mm torso + 100mm safety (conservative)
+    'torso_radius': 0.25,
+    # 150mm = 50mm arm + 100mm safety (ISO minimum)
+    'arm_radius': 0.15,
+    'shoulder_radius': 0.17,           # 170mm = 70mm shoulder + 100mm safety
 
     # Velocity-adaptive safety
     'velocity_inflation_enabled': True,
@@ -216,4 +248,14 @@ TRACKED_HUMAN_JOINTS = {
     'left_arm': ['LEFT_SHOULDER', 'LEFT_ELBOW', 'LEFT_WRIST'],
     'right_arm': ['RIGHT_SHOULDER', 'RIGHT_ELBOW', 'RIGHT_WRIST'],
     'shoulders': ['LEFT_CLAVICLE', 'RIGHT_CLAVICLE']
+}
+
+# Manual calibration offsets for ZED joint data
+# Applied to ALL received joint positions to correct Unity→Robot coordinate transform
+# Adjust these values if ZED positions don't match real-world locations
+ZED_MANUAL_OFFSET = {
+    'x': -0.138,    # Subtract 138mm from X (meters)
+    'y': 0.256,     # Add 256mm to Y (meters)
+    'z': 0.05,      # Add 50mm to Z (meters)
+    'enabled': True  # Set to False to disable manual offset
 }

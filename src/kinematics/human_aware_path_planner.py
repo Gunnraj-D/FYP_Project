@@ -11,6 +11,10 @@ Key fixes applied:
 7. Added self-collision support
 """
 
+from config import TRACKED_HUMAN_JOINTS, HUMAN_MODEL_CONFIG
+from pybullet_planning import get_collision_fn, set_client
+from pybullet_planning import plan_joint_motion, get_movable_joints
+from pybullet_planning import link_pairs_collision, get_joint_positions, set_joint_positions
 from hand_detection.zed_joint_receiver import ZEDJointReceiver, SkeletonData
 import logging
 import time
@@ -20,12 +24,6 @@ from typing import List, Optional, Tuple, Dict, Any
 from scipy.spatial.transform import Rotation as R
 
 logger = logging.getLogger(__name__)
-
-from pybullet_planning import link_pairs_collision, get_joint_positions, set_joint_positions
-from pybullet_planning import plan_joint_motion, get_movable_joints
-from pybullet_planning import get_collision_fn, set_client
-
-from config import TRACKED_HUMAN_JOINTS, HUMAN_MODEL_CONFIG
 
 
 class HumanModelAdapter:
@@ -45,15 +43,16 @@ class HumanModelAdapter:
         """Update PyBullet collision bodies from skeleton data."""
         self.valid_joints.clear()
         joint_positions = self._extract_joint_positions(skeleton)
-        
+
         self._update_head_neck_spheres(joint_positions)
         self._update_torso_capsule(joint_positions)
         self._update_arm_capsules(joint_positions, 'left')
         self._update_arm_capsules(joint_positions, 'right')
         self._update_shoulder_spheres(joint_positions)
-        
+
         self.last_update_time = time.time()
-        logger.debug(f"Updated human model with {len(self.valid_joints)} valid joints")
+        logger.debug(
+            f"Updated human model with {len(self.valid_joints)} valid joints")
 
     def _extract_joint_positions(self, skeleton: SkeletonData) -> Dict[str, np.ndarray]:
         """Extract positions of critical joints from skeleton."""
@@ -73,7 +72,8 @@ class HumanModelAdapter:
 
         logger.info(f"Found {len(found_joints)} joints: {found_joints}")
         if missing_joints:
-            logger.warning(f"Missing {len(missing_joints)} joints: {missing_joints}")
+            logger.warning(
+                f"Missing {len(missing_joints)} joints: {missing_joints}")
 
         return positions
 
@@ -189,11 +189,14 @@ class HumanModelAdapter:
                     perp_axis = np.array([1.0, 0.0, 0.0])
                 else:
                     perp_axis = np.array([0.0, 1.0, 0.0])
-                orientation = R.from_rotvec(np.pi * perp_axis).as_quat().tolist()
+                orientation = R.from_rotvec(
+                    np.pi * perp_axis).as_quat().tolist()
         else:
             rotation_axis = rotation_axis / rotation_axis_norm
-            rotation_angle = float(np.arccos(np.clip(np.dot(z_axis, direction_normalized), -1.0, 1.0)))
-            orientation = R.from_rotvec(rotation_angle * rotation_axis).as_quat().tolist()
+            rotation_angle = float(
+                np.arccos(np.clip(np.dot(z_axis, direction_normalized), -1.0, 1.0)))
+            orientation = R.from_rotvec(
+                rotation_angle * rotation_axis).as_quat().tolist()
 
         existing = self.collision_bodies.get(name)
         if existing is not None:
@@ -251,7 +254,7 @@ class HumanAwarePathPlanner:
         use_gui = config.get('planning_gui', False)
         mode = p.GUI if use_gui else p.DIRECT
         self.client = p.connect(mode)
-        
+
         if use_gui:
             logger.info("Created PyBullet planning world (GUI mode)")
             p.resetDebugVisualizerCamera(
@@ -260,7 +263,8 @@ class HumanAwarePathPlanner:
                 physicsClientId=self.client
             )
         else:
-            logger.info("Created PyBullet planning world (DIRECT mode - headless)")
+            logger.info(
+                "Created PyBullet planning world (DIRECT mode - headless)")
 
         set_client(self.client)
 
@@ -273,44 +277,51 @@ class HumanAwarePathPlanner:
         logger.info(f"Loaded robot URDF (ID={self.robot_id})")
 
         # Get movable joints
-        self.num_joints = p.getNumJoints(self.robot_id, physicsClientId=self.client)
+        self.num_joints = p.getNumJoints(
+            self.robot_id, physicsClientId=self.client)
         self.movable_joints = []
         self.joint_limits = {}
 
         logger.info("Analyzing robot joints:")
         for j in range(self.num_joints):
-            info = p.getJointInfo(self.robot_id, j, physicsClientId=self.client)
+            info = p.getJointInfo(
+                self.robot_id, j, physicsClientId=self.client)
             joint_name = info[1].decode('utf-8')
             joint_type = info[2]
-            
+
             if joint_type in (p.JOINT_REVOLUTE, p.JOINT_PRISMATIC):
                 self.movable_joints.append(j)
                 lower, upper = info[8], info[9]
-                
+
                 if lower > upper or (lower == 0.0 and upper == 0.0):
                     lower, upper = -np.pi, np.pi
-                    
+
                 self.joint_limits[j] = (lower, upper)
-                logger.info(f"  Joint {j} ({joint_name}): movable, limits [{lower:.2f}, {upper:.2f}]")
+                logger.info(
+                    f"  Joint {j} ({joint_name}): movable, limits [{lower:.2f}, {upper:.2f}]")
             else:
                 logger.info(f"  Joint {j} ({joint_name}): fixed (skipped)")
 
         # Select planning joints (first 7 movable = arm joints)
-        n_plan = min(self.config.get('planning_dof', 7), len(self.movable_joints))
+        n_plan = min(self.config.get('planning_dof', 7),
+                     len(self.movable_joints))
         self.planning_joints = self.movable_joints[:n_plan]
-        logger.info(f"Planning with {len(self.planning_joints)} joints: {self.planning_joints}")
+        logger.info(
+            f"Planning with {len(self.planning_joints)} joints: {self.planning_joints}")
 
         self.tcp_link_idx = None
         for i in range(self.num_joints):
-            link_info = p.getJointInfo(self.robot_id, i, physicsClientId=self.client)
+            link_info = p.getJointInfo(
+                self.robot_id, i, physicsClientId=self.client)
             link_name = link_info[12].decode('utf-8')  # Child link name
             if link_name == 'tcp':
                 self.tcp_link_idx = i
                 logger.info(f"Found TCP link at joint index {i}")
                 break
-        
+
         if self.tcp_link_idx is None:
-            logger.warning("Could not find 'tcp' link, using last movable joint as TCP")
+            logger.warning(
+                "Could not find 'tcp' link, using last movable joint as TCP")
             self.tcp_link_idx = self.planning_joints[-1]
 
         # Initialize human model
@@ -386,7 +397,8 @@ class HumanAwarePathPlanner:
             if old_pos is not None and new_pos is not None:
                 delta = np.linalg.norm(np.array(new_pos) - np.array(old_pos))
                 if delta > threshold:
-                    logger.info(f"Human moved: {joint_name} delta={delta:.3f}m")
+                    logger.info(
+                        f"Human moved: {joint_name} delta={delta:.3f}m")
                     return True
 
         return False
@@ -405,8 +417,9 @@ class HumanAwarePathPlanner:
 
         # FIXED: Check data freshness
         current_time = time.time()
-        frame_age = current_time - getattr(frame_data, 'timestamp', current_time)
-        
+        frame_age = current_time - \
+            getattr(frame_data, 'timestamp', current_time)
+
         if frame_age > 0.5:  # 500ms threshold
             logger.warning(f"Stale ZED data! Frame age: {frame_age:.3f}s")
             self.human_model.clear()
@@ -421,7 +434,7 @@ class HumanAwarePathPlanner:
         num_bodies = len(self.human_model.get_all_body_ids())
         logger.info(f"Human model updated: {num_bodies} collision bodies")
 
-    def _sample_goal_configurations(self, goal_pose: List[float], 
+    def _sample_goal_configurations(self, goal_pose: List[float],
                                     n_samples: int = 3) -> List[List[float]]:
         """Sample goal configurations - FIXED LENGTH HANDLING."""
         goal_configs = []
@@ -430,13 +443,13 @@ class HumanAwarePathPlanner:
         # Original goal
         if len(goal_pose) == 3:
             base_solution = self.ik_solver.solve_XYZ(
-                target_position=goal_pose,
-                current_joint_angles=[0]*7
+                target_pos=goal_pose,
+                current_q=[0]*7
             )
         else:
             base_solution = self.ik_solver.solve_pose(
                 target_pose=goal_pose,
-                current_joint_angles=[0]*7
+                current_q=[0]*7
             )
 
         if base_solution is not None:
@@ -452,13 +465,13 @@ class HumanAwarePathPlanner:
 
             if len(goal_pose) == 3:
                 solution = self.ik_solver.solve_XYZ(
-                    target_position=perturbed_pose,
-                    current_joint_angles=[0]*7
+                    target_pos=perturbed_pose,
+                    current_q=[0]*7
                 )
             else:
                 solution = self.ik_solver.solve_pose(
                     target_pose=perturbed_pose,
-                    current_joint_angles=[0]*7
+                    current_q=[0]*7
                 )
 
             if solution is not None:
@@ -468,10 +481,17 @@ class HumanAwarePathPlanner:
         logger.info(f"Sampled {len(goal_configs)} goal configurations")
         return goal_configs
 
-    def _rrt_connect_plan(self, start: List[float], 
-                         goal: List[float]) -> Optional[List[List[float]]]:
-        """Plan using RRT-Connect - FIXED COLLISION DETECTION."""
-        logger.info("Running RRT-Connect planner")
+    def _rrt_connect_plan(self, start: List[float],
+                          goal: List[float]) -> Optional[List[List[float]]]:
+        """
+        Plan using RRT-Connect with inflated human model for safety.
+
+        The human model bodies are pre-inflated with safety margins, so
+        the planner naturally maintains safe distances by avoiding collisions
+        with the inflated obstacles.
+        """
+        logger.info(
+            "Running RRT-Connect planner with safety-aware collision checking")
 
         try:
             # Set start configuration
@@ -492,21 +512,28 @@ class HumanAwarePathPlanner:
             logger.info(f"Start TCP position: {link_state[4]}")
 
             # Check start clearance
-            start_clearance, closest = self._compute_clearance_at_config_detailed(start)
-            logger.info(f"Start clearance: {start_clearance:.3f}m (closest: {closest})")
+            start_clearance, closest = self._compute_clearance_at_config_detailed(
+                start)
+            logger.info(
+                f"Start clearance: {start_clearance:.3f}m (closest: {closest})")
 
             if start_clearance < 0.02:
                 logger.error("Start configuration in collision!")
                 return None
 
-            # Get human obstacles
+            # Get human obstacles (already inflated with safety margins)
             human_bodies = self.human_model.get_all_body_ids()
             logger.info(f"Planning with {len(human_bodies)} human obstacles")
+            from config import HUMAN_MODEL_CONFIG
+            arm_r = int(HUMAN_MODEL_CONFIG.get('arm_radius', 0.12) * 1000)
+            head_r = int(HUMAN_MODEL_CONFIG.get('head_radius', 0.20) * 1000)
+            logger.info(
+                f"Human model inflated with safety margins: arms={arm_r}mm, head={head_r}mm")
 
             # Randomize RRT seed
             np.random.seed(int(time.time() * 1000) % (2**32))
 
-            # Plan
+            # Plan - the inflated obstacles enforce safety distances automatically
             path = plan_joint_motion(
                 self.robot_id,
                 self.planning_joints,
@@ -514,11 +541,11 @@ class HumanAwarePathPlanner:
                 obstacles=human_bodies,
                 self_collisions=self.config.get('check_self_collision', False),
                 disabled_collisions=set(),
+                custom_limits={},
                 max_distance=self.config.get('step_size', 0.15),
                 restarts=5,
                 iterations=self.config.get('max_iterations', 2000),
                 smooth=self.config.get('smoothing_iterations', 20),
-                custom_limits={},
                 diagnosis=False,
                 physicsClientId=self.client
             )
@@ -529,6 +556,23 @@ class HumanAwarePathPlanner:
 
             logger.info(f"Path found with {len(path)} waypoints")
             trajectory = [list(waypoint) for waypoint in path]
+
+            # SAFETY CHECK: Verify smoothed path maintains minimum clearances
+            # Smoothing can bring waypoints closer to obstacles, so we validate
+            if self.person_detected:
+                min_clearance = self._compute_min_clearance(trajectory)
+                safety_threshold = 0.01  # 10mm - account for numerical precision
+
+                if min_clearance < safety_threshold:
+                    logger.error(
+                        f"Smoothed path violates safety! Clearance {min_clearance*1000:.1f}mm "
+                        f"< {safety_threshold*1000:.1f}mm threshold. Rejecting path."
+                    )
+                    return None
+                else:
+                    logger.info(
+                        f"Path validated: minimum clearance {min_clearance*1000:.0f}mm")
+
             return trajectory
 
         except Exception as e:
@@ -551,13 +595,14 @@ class HumanAwarePathPlanner:
         for i, angle in enumerate(joint_angles):
             joint_idx = self.planning_joints[i]
             p.resetJointState(self.robot_id, joint_idx, angle,
-                            physicsClientId=self.client)
+                              physicsClientId=self.client)
 
         # FIXED: Force collision detection
         p.performCollisionDetection(physicsClientId=self.client)
 
         human_body_ids = self.human_model.get_all_body_ids()
-        body_id_to_name = {v: k for k, v in self.human_model.collision_bodies.items()}
+        body_id_to_name = {v: k for k,
+                           v in self.human_model.collision_bodies.items()}
 
         # Check for actual collisions (penetration)
         in_collision = False
@@ -584,7 +629,8 @@ class HumanAwarePathPlanner:
                             )
 
         if in_collision:
-            logger.error(f"Collision! Penetration: {collision_depth*1000:.1f}mm with {collision_body_name}")
+            logger.error(
+                f"Collision! Penetration: {collision_depth*1000:.1f}mm with {collision_body_name}")
             return 0.0, collision_body_name
 
         # Find minimum separation distance
@@ -592,8 +638,9 @@ class HumanAwarePathPlanner:
         closest_body_name = 'unknown'
 
         for human_body_id in human_body_ids:
-            body_name = body_id_to_name.get(human_body_id, f'body_{human_body_id}')
-            
+            body_name = body_id_to_name.get(
+                human_body_id, f'body_{human_body_id}')
+
             closest_points = p.getClosestPoints(
                 bodyA=self.robot_id,
                 bodyB=human_body_id,

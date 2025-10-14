@@ -27,7 +27,7 @@ from pathlib import Path
 from control.telemetry_store import Telemetry
 from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager
-from kinematics.collision_aware_kinematics_solver import CollisionAwareKinematicsSolver
+from kinematics.kinematics_solver import InverseKinematicsSolver
 
 # Import network models
 from object_detection.ggcnn2 import GGCNN2
@@ -73,7 +73,7 @@ class GraspDetector:
     """
 
     def __init__(self, model_path: str, telemetry: Telemetry, command_bus: CommandBus,
-                 camera_manager: CameraManager, kinematics_solver: CollisionAwareKinematicsSolver):
+                 camera_manager: CameraManager, kinematics_solver: InverseKinematicsSolver):
         """
         Initialize ADVANCED grasp detector.
 

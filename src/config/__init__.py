@@ -72,7 +72,8 @@ from config.robot_config import (
     PATH_PLANNING_CONFIG,
     HUMAN_MODEL_CONFIG,
     TRACKED_HUMAN_JOINTS,
-    ZED_MANUAL_OFFSET
+    ZED_MANUAL_OFFSET,
+    IK_EPSILON_MARGIN_DEG
 )
 
 # Camera configuration
@@ -231,34 +232,3 @@ def print_config_summary():
         print(
             f"   - NMS dilate size: {GRASP_DETECTION_CONFIG['nms_dilate_size']}")
     print("="*70 + "\n")
-
-
-# ============================================================================
-# MIGRATION NOTE
-# ============================================================================
-#
-# The configuration has been refactored into multiple files for better
-# organization and maintainability. All imports remain backward compatible.
-#
-# To edit a setting:
-# 1. Identify which module it belongs to (paths, opc, robot, camera, grasp, system)
-# 2. Edit the appropriate config file
-# 3. Your imports will automatically get the updated value
-#
-# Example: To change grasp detection settings, edit grasp_config.py
-#
-# Old (single file):
-#   - config.py (628 lines)  ❌ Hard to navigate
-#
-# New (modular):
-#   - paths.py (~30 lines)           ✅ File paths
-#   - opc_config.py (~30 lines)      ✅ OPC UA settings
-#   - robot_config.py (~130 lines)   ✅ Robot & planning
-#   - camera_config.py (~95 lines)   ✅ Camera & calibration
-#   - grasp_config.py (~115 lines)   ✅ Grasp detection
-#   - system_config.py (~40 lines)   ✅ Debug & logging
-#   - config.py (~180 lines)         ✅ Main re-export
-#
-# Total: Same content, much better organization!
-#
-# ============================================================================
