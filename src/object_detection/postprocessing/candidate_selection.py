@@ -45,6 +45,7 @@ class GraspCandidate:
     local_depth_m: float        # local depth
     object_overlap: float       # overlap [0,1]
     border_distance: float      # border distance [0,1]
+    center_distance: float = 1.0  # distance from mask centroid [0,1], 1=center
     is_valid: bool = True
     validity_reason: str = ""
     combined_score: float = 0.0
@@ -57,16 +58,34 @@ class GraspCandidate:
 def depth_foreground_mask(depth_map_m: np.ndarray,
                           bg_percentile: float = 80,
                           depth_diff_thresh: float = 0.02) -> np.ndarray:
-    """Create foreground object mask from depth."""
-    valid = depth_map_m[depth_map_m > 0]
-    if valid.size == 0:
+    """Create foreground object mask from depth using border-based background estimate."""
+    h, w = depth_map_m.shape
+    depth_valid = depth_map_m > 0
+    if not depth_valid.any():
         return np.ones_like(depth_map_m, dtype=bool)
 
-    # Background is farther away (higher percentile)
-    bg = np.percentile(valid, bg_percentile)
+    # Estimate background from a border ring to avoid large foreground bias
+    margin = max(6, min(h, w) // 12)  # ~8% of image size
+    border_mask = np.zeros_like(depth_valid, dtype=bool)
+    border_mask[:margin, :] = True
+    border_mask[-margin:, :] = True
+    border_mask[:, :margin] = True
+    border_mask[:, -margin:] = True
 
-    # Foreground is closer than background
-    mask = (depth_map_m > 0) & (depth_map_m < (bg - depth_diff_thresh))
+    border_valid = depth_valid & border_mask
+    if border_valid.sum() >= 50:
+        bg_samples = depth_map_m[border_valid]
+    else:
+        bg_samples = depth_map_m[depth_valid]
+
+    # Background is farther (larger depth)
+    try:
+        bg = float(np.percentile(bg_samples, bg_percentile))
+    except Exception:
+        bg = float(np.median(bg_samples))
+
+    # Foreground is closer than background by threshold
+    mask = depth_valid & (depth_map_m < (bg - depth_diff_thresh))
 
     # Morphological cleaning
     mask_uint8 = mask.astype(np.uint8)
@@ -96,6 +115,34 @@ def topk_local_maxima(q_img: np.ndarray, k: int,
     vals = q_img.ravel()[peak_idxs]
     pick = peak_idxs[np.argsort(-vals)][:k]
 
+    return pick
+
+
+def topk_local_maxima_hybrid(q_img: np.ndarray, width_img: np.ndarray,
+                             mask: np.ndarray, k: int,
+                             dilate_size: int = 9,
+                             min_thr: float = 0.03) -> np.ndarray:
+    """
+    Hybrid selection using quality + width + mask to preserve candidates when quality is noisy.
+    """
+    width_valid = (width_img > 10) & (width_img < 150)
+    hybrid_score = q_img * mask.astype(float) * width_valid.astype(float)
+
+    kernel = np.ones((dilate_size, dilate_size), np.uint8)
+    dil = cv2.dilate(hybrid_score, kernel)
+    peaks = (hybrid_score == dil) & (hybrid_score > min_thr * 0.5)
+
+    peak_idxs = np.flatnonzero(peaks.ravel())
+    if peak_idxs.size == 0:
+        mask_center = np.argwhere(mask)
+        if len(mask_center) > 0:
+            center = mask_center.mean(axis=0).astype(int)
+            r_flat = int(center[0]) * mask.shape[1] + int(center[1])
+            return np.array([r_flat])
+        return np.array([])
+
+    vals = hybrid_score.ravel()[peak_idxs]
+    pick = peak_idxs[np.argsort(-vals)][:k]
     return pick
 
 
@@ -140,6 +187,27 @@ def compute_grasp_rectangle_overlap(u: int, v: int, angle_rad: float,
                         overlap_count += 1
 
     return overlap_count / total_count if total_count > 0 else 0.0
+
+
+def compute_center_distance(u: int, v: int, mask: np.ndarray,
+                            normalized: bool = True) -> float:
+    """
+    Compute distance score from mask centroid: 1.0 at center, 0.0 near edges.
+    """
+    coords = np.argwhere(mask)
+    if coords.shape[0] < 10:
+        return 0.5
+
+    center_v, center_u = coords.mean(axis=0)
+    dist = np.sqrt((u - center_u) ** 2 + (v - center_v) ** 2)
+
+    max_dist = np.sqrt(
+        ((coords[:, 0] - center_v) ** 2 + (coords[:, 1] - center_u) ** 2).max())
+    if max_dist < 1:
+        return 1.0
+
+    score = 1.0 - (dist / max_dist)
+    return float(np.clip(score, 0.0, 1.0))
 
 
 # ============================================================================

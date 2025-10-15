@@ -14,7 +14,7 @@ from control.command_bus import CommandBus
 from camera_management.camera_manager import CameraManager, CameraConfig
 from IO_handling.opc_client_factory import OPCClientFactory, OPCConfig
 from hand_detection.hand_detection_module import HandTracker, HandTrackingConfig
-from object_detection.grasp_detector import GraspDetector as GGcnn2Module
+from object_detection.grasp_detector import GraspDetector
 from kinematics.kinematics_solver import InverseKinematicsSolver
 from states.state_machine import StateMachine
 from states.context import StateContext
@@ -24,7 +24,7 @@ from states.base_state import BaseState
 # Configuration
 from config import (
     LOOP_RATE_MS, URDF_FILEPATH, BASE_ELEMENT, ACTIVE_LINKS,
-    OPC_SERVER_URL, OPC_OBJECTS_NAME, GGCNN2_MODEL_PATH, ROBOT_ID, get_robot_name
+    OPC_SERVER_URL, OPC_OBJECTS_NAME, GRCONVNET_MODEL_PATH, ROBOT_ID, get_robot_name
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -99,9 +99,9 @@ class IntegratedRobotControlSystem:
             self.telemetry, self.command_bus, self.camera_manager, hand_config
         )
 
-        # Initialize GGCNN2 module
-        self.ggcnn2_module = GGcnn2Module(
-            model_path=str(GGCNN2_MODEL_PATH),
+        # Initialize grasp detector (GR-ConvNet)
+        self.grasp_detector = GraspDetector(
+            model_path=str(GRCONVNET_MODEL_PATH),
             telemetry=self.telemetry,
             command_bus=self.command_bus,
             camera_manager=self.camera_manager,

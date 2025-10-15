@@ -79,7 +79,7 @@ GRASP_DETECTION_CONFIG = {
     # Approach configuration
     'approach_height_offset': 0.050,    # Height offset for approach (meters)
     # Depth offset for grasp (meters) - raised by 15mm to compensate
-    'grasp_depth_offset': 0.025,
+    'grasp_depth_offset': 0.04,
     'vertical_approach': True,          # Use vertical approach angle
     'approach_angle': -90.0,            # Approach angle in degrees
     'frame_processing_interval': 0.5,   # Process frames every N seconds
@@ -90,7 +90,7 @@ GRASP_DETECTION_CONFIG = {
     'compose_order': 'down_then_z',     # Rotation composition order
 
     # Depth sampling
-    'depth_sample_radius': 5,           # Radius (pixels) for depth queries
+    'depth_sample_radius': 7,           # Radius (pixels) for depth queries
     # In-plane angle filtering (None = disabled)
     'topdown_angle_tolerance_rad': None,
     # Reference angle (if filtering enabled)
@@ -113,6 +113,10 @@ GRASP_DETECTION_CONFIG = {
 
     # Enable all anti-tip fixes (HIGHLY RECOMMENDED)
     'use_advanced_postprocessing': True,
+    # Optional heuristics (default disabled for stability)
+    'use_plane_suppression': False,
+    'use_quality_union': False,
+    'use_interior_center_check': False,
 
     # WIDTH CALIBRATION ⚖️
     # Calibrated for: RealSense D435 + GR-ConvNet (Jacquard) + 30mm screwdriver
@@ -123,30 +127,37 @@ GRASP_DETECTION_CONFIG = {
     # Minimum overlap between grasp rectangle and detected object
     # Prevents tip grasps by requiring contact with object body
     # Guidelines: Flat (0.3-0.4), Cylindrical (0.25-0.3), Small (0.2-0.25)
-    'min_overlap': 0.25,  # Calibrated for cylindrical objects (screwdrivers)
+    'min_overlap': 0.55,
 
     # FOREGROUND MASK SEGMENTATION 🔍
     # Parameters for depth-based object/background segmentation
     # Background depth percentile (higher = stricter)
-    'bg_percentile': 80,
-    'depth_diff_thresh': 0.02,   # Foreground depth threshold in meters (2cm)
+    'bg_percentile': 72,
+    'depth_diff_thresh': 0.012,   # Foreground depth threshold in meters (12mm)
 
     # NON-MAXIMUM SUPPRESSION (NMS) 🎲
     # Prevents selecting sharp quality spikes at tips
     # Kernel size: Larger = more aggressive, Smaller = more permissive
     # Screwdrivers: 9-11, Small objects: 7, Large objects: 11-13
-    'nms_dilate_size': 9,
-    'nms_min_threshold': 0.03,   # Minimum quality for local maxima
+    'nms_dilate_size': 5,
+    'nms_min_threshold': 0.01,   # Minimum quality for local maxima
 
     # PCA-BASED ANGLE CORRECTION 📐
     # Automatically fixes 90° convention mismatches on axis-aligned objects
     # Works on horizontal, vertical, and diagonal orientations
     'use_pca_angle_correction': True,
+    # PCA alignment mode: 'align' (match PCA axis) or 'perpendicular' (gripper closes across PCA axis)
+    'pca_align_mode': 'align',
 
     # BORDER PENALTY 🚫
     # Rejects grasps too close to image edges
     # Range: [0,1], where 0.2 = within 20% of edge
-    'border_threshold': 0.20,
+    'border_threshold': 0.15,
+    'boost_masked_quality': True,
+    'denoise_quality': True,
+    'use_geometric_fallback': True,
+    # Minimum pixel distance from object edge for interior center check
+    'edge_margin_px': 6,
 
     # MULTI-FACTOR SCORING WEIGHTS ⚖️
     # Formula: score = (Q^w_q) × (O^w_o) × (B^w_b) × (W^w_w) × (T^w_t)
@@ -214,7 +225,33 @@ OBJECT_PROFILES = {
         'width_multiplier': 95.0,  # May need recalibration
         'min_overlap': 0.30,
         'nms_dilate_size': 11,
-        'bg_percentile': 82,
+        'bg_percentile': 78,
+        'depth_diff_thresh': 0.015,
+        'pca_align_mode': 'perpendicular',
+        'scoring_weights': {
+            'q': 1.0,
+            'o': 1.1,
+            'b': 0.5,
+            'w': 0.5,
+            't': 0.8
+        }
+    },
+
+    # Rectangular box (generic)
+    'rect_box': {
+        'width_multiplier': 95.0,
+        'min_overlap': 0.35,
+        'nms_dilate_size': 11,
+        'bg_percentile': 75,
+        'depth_diff_thresh': 0.01,
+        'pca_align_mode': 'perpendicular',
+        'scoring_weights': {
+            'q': 1.0,
+            'o': 1.0,
+            'b': 0.4,
+            'w': 0.4,
+            't': 0.8
+        }
     },
 }
 

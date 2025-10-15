@@ -10,7 +10,8 @@ from config import (
     PICKUP_LOCATION,
     set_camera_transform_mode,
     print_camera_transform_info,
-    CAMERA_TRANSFORM_MODE
+    CAMERA_TRANSFORM_MODE,
+    print_config_summary
 )
 from states.placement_task_sequencer import PlacementTaskSequencer, create_placement_sequencer
 from states.pickup_task_sequencer import PickupTaskSequencer, create_pickup_sequencer
@@ -33,6 +34,7 @@ import sys
 import threading
 import asyncio
 from typing import Optional, Dict, List
+import argparse
 
 # Suppress TensorFlow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -55,7 +57,7 @@ logging.getLogger('IO_handling.mock_opc_client').setLevel(logging.INFO)
 logging.getLogger('camera_management.camera_manager').setLevel(logging.ERROR)
 logging.getLogger(
     'hand_detection.hand_detection_module').setLevel(logging.ERROR)
-logging.getLogger('object_detection.ggcnn2_module').setLevel(logging.INFO)
+logging.getLogger('object_detection.grasp_detector').setLevel(logging.INFO)
 logging.getLogger('kinematics.kinematics_solver').setLevel(logging.INFO)
 logging.getLogger('states.grasping_state').setLevel(logging.INFO)
 logging.getLogger('integrated_robot_control_system').setLevel(logging.ERROR)
@@ -70,6 +72,11 @@ logging.getLogger('states.human_aware_move_to_state').setLevel(logging.INFO)
 logging.getLogger('states.human_handoff_approach_state').setLevel(logging.INFO)
 logging.getLogger('kinematics.human_aware_path_planner').setLevel(logging.INFO)
 logging.getLogger('hand_detection.zed_joint_receiver').setLevel(logging.INFO)
+logging.getLogger('object_detection.postprocessing').setLevel(logging.INFO)
+logging.getLogger(
+    'object_detection.postprocessing.__init__').setLevel(logging.INFO)
+logging.getLogger(
+    'object_detection.postprocessing.candidate_selection').setLevel(logging.INFO)
 
 # Suppress additional noisy loggers
 warnings.filterwarnings("ignore", category=UserWarning,
@@ -86,8 +93,15 @@ class DebugSystemManager:
     Debug manager for interactive state and sequencer execution.
     """
 
-    def __init__(self, opc_mode: str = None):
+    def __init__(self, opc_mode: str = None, no_camera: bool = False,
+                 verbose: bool = False, debug_visuals: Optional[bool] = None,
+                 zed: Optional[bool] = None, profile: Optional[str] = None):
         self.opc_mode = opc_mode
+        self.no_camera = bool(no_camera)
+        self.verbose = bool(verbose)
+        self.debug_visuals = debug_visuals
+        self.profile_name = profile
+        self.zed_enabled = True if zed is None else bool(zed)
         self.system: Optional[IntegratedRobotControlSystem] = None
         self.context: Optional[StateContext] = None
         self.state_machine: Optional[StateMachine] = None
@@ -170,20 +184,20 @@ class DebugSystemManager:
                 f"🚀 Initializing Debug Robot Control System in '{self.opc_mode}' mode...")
             self.system = IntegratedRobotControlSystem(opc_mode=self.opc_mode)
 
-            # Initialize ZED receiver (optional - for human-aware planning)
-            try:
-                self.zed_receiver = ZEDJointReceiver(
-                    host='0.0.0.0',
-                    port=5005,
-                    smoothing_factor=0.3,        # 0-1: higher = less smooth, more responsive
-                    tracking_loss_frames=5       # Tolerate 5 frames of tracking loss
-                )
-                self.zed_receiver.start()
-                logger.info(
-                    "✅ ZED Joint Receiver started (smoothing: 0.3, loss tolerance: 5 frames)")
-            except Exception as e:
-                logger.warning(f"⚠️ ZED receiver not started: {e}")
-                self.zed_receiver = None
+            # Initialize ZED receiver if enabled
+            if self.zed_enabled:
+                try:
+                    self.zed_receiver = ZEDJointReceiver(
+                        host='0.0.0.0',
+                        port=5005,
+                        smoothing_factor=0.3,
+                        tracking_loss_frames=5
+                    )
+                    self.zed_receiver.start()
+                    logger.info("✅ ZED Joint Receiver started")
+                except Exception as e:
+                    logger.warning(f"⚠️ ZED receiver not started: {e}")
+                    self.zed_receiver = None
 
             # Get the context from the system
             self.context = StateContext(
@@ -221,14 +235,15 @@ class DebugSystemManager:
             if self.opc_mode == "mock":
                 self.start_mock_server()
 
-            # Initialize camera (optional for debug mode)
-            try:
-                if not self.system.camera_manager.initialize():
-                    print("⚠️ Camera initialization failed - continuing without camera")
-            except Exception as e:
-                print(
-                    f"⚠️ Camera not available")
-                return False
+            # Initialize camera (optional)
+            if not self.no_camera:
+                try:
+                    if not self.system.camera_manager.initialize():
+                        print(
+                            "⚠️ Camera initialization failed - continuing without camera")
+                except Exception as e:
+                    print(f"⚠️ Camera not available")
+                    return False
 
             # # Start hand tracker (optional for debug mode)
             # try:
@@ -330,7 +345,7 @@ class DebugSystemManager:
             3: GripperControlState(self.context, action='open'),
             4: GripperControlState(self.context, action='close'),
             5: UnifiedHandTrackingState(self.context),
-            6: GraspingState(self.context),
+            6: GraspingState(self.context, object_profile=self.profile_name, enable_visuals=self.debug_visuals),
             # Safe retreat position (far from human interaction zone)
             # Far left, high
             11: MoveToState(self.context, target_location=(-0.4, 0.4, 0.5)),
@@ -516,6 +531,8 @@ class DebugSystemManager:
         print("  sequencers - Show available sequencers")
         print("  run <number> - Execute state by number")
         print("  seq <number> - Execute sequencer by number")
+        print("  config - Show config summary")
+        print("  profile <name> - Set grasp object profile")
         print("  camera - Toggle camera transform mode (calibrated/simple)")
         print("  camera info - Show camera transform details")
         print("  force - Force completion of current execution")
@@ -549,6 +566,15 @@ class DebugSystemManager:
                     self._toggle_camera_mode()
                 elif command == "camera info":
                     print_camera_transform_info()
+                elif command == "config":
+                    print_config_summary()
+                elif command.startswith("profile "):
+                    parts = command.split()
+                    if len(parts) == 2:
+                        self.profile_name = parts[1]
+                        print(f"✅ Profile set: {self.profile_name}")
+                    else:
+                        print("❌ Usage: profile <name>")
                 elif command == "force":
                     self.force_complete_execution()
                 elif command == "status":
@@ -639,7 +665,8 @@ class DebugSystemManager:
             elif state_num == 5:
                 state = UnifiedHandTrackingState(self.context)
             elif state_num == 6:
-                state = GraspingState(self.context)
+                state = GraspingState(
+                    self.context, object_profile=self.profile_name, enable_visuals=self.debug_visuals)
             elif state_num == 7:
                 if not self.zed_receiver:
                     print("❌ ZED receiver not running. Start Unity with ZED first.")
@@ -753,31 +780,40 @@ def signal_handler(signum, frame):
 def main():
     """Main entry point for debug mode."""
     # Set up signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    try:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+    except Exception:
+        pass
 
     # Parse command line arguments
-    opc_mode = None
-    if len(sys.argv) > 1:
-        arg_mode = sys.argv[1].lower()
-        if arg_mode in ["real", "mock"]:
-            opc_mode = arg_mode
-            logger.info(f"Using OPC mode: {opc_mode}")
-        elif arg_mode in ["-h", "--help"]:
-            print("Usage: python main_debug.py [real|mock]")
-            print("  real  - Use real OPC UA client (default)")
-            print("  mock  - Use mock OPC UA client for simulation")
-            print("  -h    - Show this help message")
-            return 0
-        else:
-            print(f"❌ Invalid argument: {arg_mode}")
-            print("Usage: python main_debug.py [real|mock]")
-            print("  real  - Use real OPC UA client")
-            print("  mock  - Use mock OPC UA client for simulation")
-            return 1
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument('--opc-mode', choices=['real', 'mock'], default=None)
+    parser.add_argument('--no-camera', action='store_true')
+    parser.add_argument('--verbose', action='store_true')
+    parser.add_argument('--debug-visuals',
+                        dest='debug_visuals', action='store_true')
+    parser.add_argument('--no-debug-visuals',
+                        dest='debug_visuals', action='store_false')
+    parser.set_defaults(debug_visuals=None)
+    parser.add_argument('--zed', dest='zed', action='store_true')
+    parser.add_argument('--no-zed', dest='zed', action='store_false')
+    parser.set_defaults(zed=None)
+    parser.add_argument('--profile', type=str, default=None)
+
+    args = parser.parse_args()
+    if args.verbose:
+        logging.getLogger().setLevel(logging.INFO)
 
     # Create debug system manager
-    manager = DebugSystemManager(opc_mode=opc_mode)
+    manager = DebugSystemManager(
+        opc_mode=args.opc_mode,
+        no_camera=args.no_camera,
+        verbose=args.verbose,
+        debug_visuals=args.debug_visuals,
+        zed=args.zed,
+        profile=args.profile
+    )
 
     try:
         # Initialize system

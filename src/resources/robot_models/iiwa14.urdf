@@ -21,7 +21,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_0.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/visual/link_0.stl"/>
       </geometry>
       <material name="Grey"/>
     </visual>
@@ -29,7 +29,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_0_s.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/collision/link_0_s.stl"/>
       </geometry>
     </collision>
   </link>
@@ -55,7 +55,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_1.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/visual/link_1.stl"/>
       </geometry>
       <material name="Orange"/>
     </visual>
@@ -63,7 +63,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_1_s.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/collision/link_1_s.stl"/>
       </geometry>
     </collision>
   </link>
@@ -89,7 +89,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_2.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/visual/link_2.stl"/>
       </geometry>
       <material name="Orange"/>
     </visual>
@@ -97,7 +97,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_2_s.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/collision/link_2_s.stl"/>
       </geometry>
     </collision>
   </link>
@@ -123,7 +123,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_3.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/visual/link_3.stl"/>
       </geometry>
       <material name="Orange"/>
     </visual>
@@ -131,7 +131,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_3_s.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/collision/link_3_s.stl"/>
       </geometry>
     </collision>
   </link>
@@ -157,7 +157,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_4.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/visual/link_4.stl"/>
       </geometry>
       <material name="Orange"/>
     </visual>
@@ -165,7 +165,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_4_s.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/collision/link_4_s.stl"/>
       </geometry>
     </collision>
   </link>
@@ -191,7 +191,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_5.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/visual/link_5.stl"/>
       </geometry>
       <material name="Orange"/>
     </visual>
@@ -199,7 +199,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_5_s.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/collision/link_5_s.stl"/>
       </geometry>
     </collision>
   </link>
@@ -225,7 +225,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_6.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/visual/link_6.stl"/>
       </geometry>
       <material name="Orange"/>
     </visual>
@@ -233,7 +233,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_6_s.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/collision/link_6_s.stl"/>
       </geometry>
     </collision>
   </link>
@@ -259,7 +259,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/visual/link_7-MF-Touch-pneumatisch.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/visual/link_7-MF-Touch-pneumatisch.stl"/>
       </geometry>
       <material name="Grey"/>
     </visual>
@@ -267,7 +267,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="../../kuka_description/meshes/iiwa14/collision/link_7-MF-Touch-pneumatisch_s.stl"/>
+        <mesh filename="../kuka_description/meshes/iiwa14/collision/link_7-MF-Touch-pneumatisch_s.stl"/>
       </geometry>
     </collision>
   </link>

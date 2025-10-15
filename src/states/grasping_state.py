@@ -18,9 +18,9 @@ from dataclasses import dataclass
 
 from states.base_state import BaseState
 from states.context import StateContext
-from object_detection.grasp_detector import GraspDetector as GGcnn2Module
+from object_detection.grasp_detector import GraspDetector
 from config import (
-    GGCNN2_MODEL_PATH,
+    GRCONVNET_MODEL_PATH,
     GRASP_EXECUTION_CONFIG,
     GRASP_DETECTION_CONFIG,
     OBJECT_PROFILES,
@@ -74,7 +74,8 @@ class GraspingState(BaseState):
                  auto_process: bool = False,
                  approach_z_offset: float = 0.05,
                  num_collection_frames: int = 8,
-                 object_profile: Optional[str] = None):
+                 object_profile: Optional[str] = None,
+                 enable_visuals: Optional[bool] = None):
         """
         Initialize grasping state.
 
@@ -94,7 +95,8 @@ class GraspingState(BaseState):
         self.object_profile = object_profile
 
         # Grasp detector
-        self.ggcnn2_module: Optional[GGcnn2Module] = None
+        self.grasp_detector: Optional[GraspDetector] = None
+        self.enable_visuals = enable_visuals
 
         # Retry logic (for fallback)
         self.max_attempts = GRASP_EXECUTION_CONFIG['retry_attempts']
@@ -134,12 +136,13 @@ class GraspingState(BaseState):
                 self._apply_object_profile(self.object_profile)
 
             # Initialize grasp detector
-            self.ggcnn2_module = GGcnn2Module(
-                model_path=str(GGCNN2_MODEL_PATH),
+            self.grasp_detector = GraspDetector(
+                model_path=str(GRCONVNET_MODEL_PATH),
                 telemetry=self.context.telemetry,
                 command_bus=self.context.commands,
                 camera_manager=self.context.camera,
-                kinematics_solver=self.context.ik
+                kinematics_solver=self.context.ik,
+                enable_visuals=self.enable_visuals
             )
 
             # Reset state
@@ -199,31 +202,36 @@ class GraspingState(BaseState):
     def _execute_multi_frame(self, depth_frame, color_frame):
         """Multi-frame best-of-N selection."""
 
-        # Check if we already have best grasp selected
         if self.best_grasp is not None:
-            return  # Wait for is_complete() to finish
+            return
 
-        # Collect frames up to limit
-        if self.frames_collected < self.num_collection_frames:
-            # Process frame
-            grasp_result = self.ggcnn2_module.process_depth_frame(
+        # Fast collection: grab remaining frames in a tight loop
+        while self.frames_collected < self.num_collection_frames:
+            if depth_frame is None or color_frame is None:
+                color_frame, depth_frame = self.context.camera.get_frames()
+                if depth_frame is None:
+                    break
+
+            grasp_result = self.grasp_detector.process_depth_frame(
                 depth_frame, color_frame)
 
             if grasp_result is not None:
-                # Create candidate
                 candidate = self._create_candidate(
                     grasp_result, self.frames_collected)
                 self.collected_candidates.append(candidate)
-
-                logger.info(f"📸 Frame {self.frames_collected + 1}/{self.num_collection_frames}: "
-                            f"Quality={candidate.quality:.3f}, Score={candidate.multi_factor_score:.4f}")
+                logger.info(
+                    f"📸 Frame {self.frames_collected + 1}/{self.num_collection_frames}: "
+                    f"Quality={candidate.quality:.3f}, Score={candidate.multi_factor_score:.4f}")
             else:
                 logger.debug(
                     f"Frame {self.frames_collected + 1}/{self.num_collection_frames}: No grasp found")
 
             self.frames_collected += 1
 
-        # Once all frames collected, select best
+            # Force fetch next frame
+            depth_frame = None
+            color_frame = None
+
         if self.frames_collected >= self.num_collection_frames:
             self._select_best_grasp()
 
@@ -390,11 +398,7 @@ class GraspingState(BaseState):
                 logger.info(f"📏 Applied depth offset: {depth_offset*1000:.1f}mm "
                             f"(Z: {original_z:.3f} → {grasp_pose_base[2]:.3f})")
 
-            # Add 90° rotation to gripper yaw
-            original_yaw = grasp_pose_base[5]
-            grasp_pose_base[5] += np.pi / 2
-            logger.info(f"🔄 Added 90° gripper rotation: "
-                        f"yaw {np.degrees(original_yaw):.1f}° → {np.degrees(grasp_pose_base[5]):.1f}°")
+            # Orientation already determined by pipeline; no manual rotation
 
             # Store grasp height
             grasp_height = grasp_pose_base[2]
@@ -470,6 +474,13 @@ class GraspingState(BaseState):
                 cv2.destroyAllWindows()
             except Exception as e:
                 logger.warning(f"Failed to close windows: {e}")
+
+        # Detector cleanup
+        try:
+            if self.grasp_detector:
+                self.grasp_detector.cleanup()
+        except Exception:
+            pass
 
         # Reset state
         self.collected_candidates = []

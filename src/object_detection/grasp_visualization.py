@@ -10,6 +10,10 @@ import cv2
 import numpy as np
 import logging
 from typing import Dict, Optional
+import threading
+import os
+import time
+import matplotlib.pyplot as plt
 
 from config import DEBUG_MODE, DEBUG_CONFIG
 
@@ -46,6 +50,8 @@ class GraspVisualizer:
             return
 
         try:
+            if threading.current_thread().name != 'MainThread':
+                return
             # Normalize depth for display
             depth_display = self._normalize_depth_for_display(depth_image)
 
@@ -208,3 +214,49 @@ class GraspVisualizer:
         except Exception as e:
             logger.warning(f"Failed to cleanup visualization windows: {e}")
 
+    def visualize_debug_masks(self, depth_image: np.ndarray, object_mask: np.ndarray, quality_map: np.ndarray):
+        """Show diagnostic depth, object mask, and quality map side-by-side."""
+        if not self.enabled:
+            return
+
+        # If not main thread, save snapshots to disk instead of showing GUI
+        if threading.current_thread().name != 'MainThread':
+            try:
+                out_dir = os.path.join(os.getcwd(), 'debug_outputs')
+                os.makedirs(out_dir, exist_ok=True)
+                ts = int(time.time() * 1000)
+
+                depth_disp = (self._normalize_depth_for_display(
+                    depth_image) * 255).astype(np.uint8)
+                qual_disp = quality_map
+                if hasattr(qual_disp, 'shape') and qual_disp.max() <= 1.0:
+                    qual_disp = (qual_disp * 255).astype(np.uint8)
+                else:
+                    qual_disp = np.clip(qual_disp, 0, 255).astype(np.uint8)
+                mask_disp = (object_mask.astype(np.uint8) * 255)
+
+                cv2.imwrite(os.path.join(
+                    out_dir, f"depth_{ts}.png"), depth_disp)
+                cv2.imwrite(os.path.join(out_dir, f"mask_{ts}.png"), mask_disp)
+                cv2.imwrite(os.path.join(
+                    out_dir, f"quality_{ts}.png"), qual_disp)
+                logger.info(f"Saved debug masks to {out_dir} (ts={ts})")
+            except Exception as e:
+                logger.warning(f"Failed to save debug masks: {e}")
+            return
+
+        try:
+            fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+            axes[0].imshow(depth_image, cmap='inferno')
+            axes[0].set_title('Depth')
+            axes[1].imshow(object_mask, cmap='gray')
+            axes[1].set_title('Object Mask')
+            axes[2].imshow(quality_map, cmap='viridis')
+            axes[2].set_title('Quality Map')
+            for ax in axes:
+                ax.axis('off')
+            plt.tight_layout()
+            plt.show(block=False)
+            plt.pause(0.001)
+        except Exception as e:
+            logger.warning(f"Failed to visualize debug masks: {e}")

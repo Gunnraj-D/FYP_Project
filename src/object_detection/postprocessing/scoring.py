@@ -25,7 +25,8 @@ def get_default_weights() -> Dict[str, float]:
         'o': 1.2,   # Overlap (emphasized for anti-tip)
         'b': 0.5,   # Border (less critical if other factors good)
         'w': 0.7,   # Width preference (optimal range)
-        't': 0.8    # Temporal consistency (reduces jitter)
+        't': 0.8,   # Temporal consistency (reduces jitter)
+        'c': 1.0    # Center distance (favor grasps near mask centroid)
     }
 
 
@@ -127,7 +128,9 @@ class GraspScorer:
                 (o_score ** w['o']) * \
                 (b_score ** w['b']) * \
                 (w_score ** w['w']) * \
-                (t_score ** w['t']) + eps
+                (t_score ** w['t']) * \
+                (float(np.clip(candidate.center_distance, 0.0, 1.0))
+                 ** w.get('c', 1.0)) + eps
 
         return score
 

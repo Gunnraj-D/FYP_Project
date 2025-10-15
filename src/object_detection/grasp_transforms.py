@@ -77,20 +77,20 @@ class GraspTransformer:
 
             # Get depth at grasp center
             depth_source = original_depth_frame if original_depth_frame else depth_image
-            depth = self.camera_manager.get_average_depth(
+            depth_m, _quality = self.camera_manager.get_average_depth(
                 depth_source,
                 (int(center_u_scaled), int(center_v_scaled)),
                 radius=GRASP_DETECTION_CONFIG.get('depth_sample_radius', 5)
             )
 
-            if depth <= 0:
-                logger.warning(f"Invalid depth at grasp center: depth={depth}, "
+            if depth_m is None or depth_m <= 0:
+                logger.warning(f"Invalid depth at grasp center: depth={depth_m}, "
                                f"center=({int(center_u_scaled)}, {int(center_v_scaled)})")
                 return None
 
             # Convert pixel to 3D coordinates in camera frame
             x, y, z = self.camera_manager.pixel_to_3d(
-                int(center_u_scaled), int(center_v_scaled), depth
+                int(center_u_scaled), int(center_v_scaled), depth_m
             )
 
             # Create grasp orientation in camera frame with facing-down orientation

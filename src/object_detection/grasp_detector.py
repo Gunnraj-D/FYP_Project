@@ -1,17 +1,10 @@
 """
 Grasp detector module - orchestrates the grasp detection pipeline.
 
-Features:
-1. Per-channel RGB and percentile-based depth preprocessing
-2. Multi-factor scoring with temporal filtering
-3. Local depth estimation with camera intrinsics
-4. PCA-based angle correction
-5. Advanced candidate selection
-
 Pipeline components:
 - Preprocessing (grasp_preprocessing.py)
-- Network inference (ggcnn2.py or grconvnet.py)
-- Postprocessing (grasp_postprocessing.py)
+- Network inference (grconvnet.py)
+- Postprocessing (postprocessing/)
 - Coordinate transformations (grasp_transforms.py)
 - Visualization (grasp_visualization.py)
 """
@@ -29,7 +22,6 @@ from camera_management.camera_manager import CameraManager
 from kinematics.kinematics_solver import InverseKinematicsSolver
 
 # Import network models
-from object_detection.ggcnn2 import GGCNN2
 from object_detection.grconvnet import GRConvNet
 
 # Import refactored modules
@@ -41,7 +33,7 @@ from object_detection.grasp_visualization import GraspVisualizer
 # Config
 from config import (
     GRASP_DETECTION_CONFIG, GRASP_EXECUTION_CONFIG, DEBUG_MODE,
-    GRASP_MODEL_TYPE, GRCONVNET_CONFIG, GGCNN2_MODEL_PATH, GRCONVNET_MODEL_PATH
+    GRCONVNET_CONFIG, GRCONVNET_MODEL_PATH
 )
 
 logger = logging.getLogger(__name__)
@@ -72,7 +64,8 @@ class GraspDetector:
     """
 
     def __init__(self, model_path: str, telemetry: Telemetry, command_bus: CommandBus,
-                 camera_manager: CameraManager, kinematics_solver: InverseKinematicsSolver):
+                 camera_manager: CameraManager, kinematics_solver: InverseKinematicsSolver,
+                 enable_visuals: Optional[bool] = None):
         """
         Initialize grasp detector.
 
@@ -93,21 +86,16 @@ class GraspDetector:
             "cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
 
-        # Model configuration
-        self.model_type = GRASP_MODEL_TYPE
-        self.use_rgbd = (GRASP_MODEL_TYPE == 'grconvnet')
-
-        if self.use_rgbd:
-            self.resize_size = GRCONVNET_CONFIG.get('input_size', 300)
-        else:
-            self.resize_size = 300  # GGCNN2 standard
+        # Model configuration (GR-ConvNet only)
+        self.use_rgbd = True
+        self.resize_size = GRCONVNET_CONFIG.get('input_size', 300)
 
         # Initialize model
-        self.model = self._load_model()
+        self.model = self._load_model(model_path)
 
         # Initialize pipeline components
         self.preprocessor = GraspPreprocessor(
-            model_type=self.model_type,
+            model_type='grconvnet',
             resize_size=self.resize_size,
             device=self.device
         )
@@ -123,9 +111,14 @@ class GraspDetector:
                 'temporal_outlier_threshold_deg', 30)
         )
 
+        visuals_enabled = DEBUG_MODE if enable_visuals is None else bool(
+            enable_visuals)
+        self.visualizer = GraspVisualizer(enabled=visuals_enabled)
+
         self.postprocessor = GraspPostprocessor(
             camera_manager=camera_manager,
-            temporal_filter=self.temporal_filter
+            temporal_filter=self.temporal_filter,
+            visualizer=self.visualizer
         )
 
         self.transformer = GraspTransformer(
@@ -134,35 +127,29 @@ class GraspDetector:
             telemetry=telemetry
         )
 
-        self.visualizer = GraspVisualizer(enabled=DEBUG_MODE)
-
+        logger.info("GR-ConvNet grasp detector initialized")
         logger.info(
-            f"{self.model_type.upper()} grasp detector initialized")
-        logger.info(f"Input: {'RGB-D' if self.use_rgbd else 'Depth'}, "
-                    f"Size: {self.resize_size}x{self.resize_size}")
-        logger.debug(
-            f"Features: temporal_filter, PCA_correction, multi_factor_scoring")
+            f"Input: RGB-D, Size: {self.resize_size}x{self.resize_size}")
 
-    def _load_model(self) -> torch.nn.Module:
-        """Load and initialize grasp detection model."""
-        if self.model_type == 'grconvnet':
-            model = GRConvNet(
-                input_channels=GRCONVNET_CONFIG.get('input_channels', 4),
-                channel_size=GRCONVNET_CONFIG.get('channel_size', 32),
-                input_size=self.resize_size,
-                dropout=GRCONVNET_CONFIG.get('use_dropout', False),
-                dropout_prob=GRCONVNET_CONFIG.get('dropout_prob', 0.0)
-            )
-            model_path = str(GRCONVNET_MODEL_PATH)
-        else:
-            model = GGCNN2()
-            model_path = str(GGCNN2_MODEL_PATH)
+    def _load_model(self, model_path_arg: Optional[str]) -> torch.nn.Module:
+        """Load and initialize GR-ConvNet model."""
+        model = GRConvNet(
+            input_channels=GRCONVNET_CONFIG.get('input_channels', 4),
+            channel_size=GRCONVNET_CONFIG.get('channel_size', 32),
+            input_size=self.resize_size,
+            dropout=GRCONVNET_CONFIG.get('use_dropout', False),
+            dropout_prob=GRCONVNET_CONFIG.get('dropout_prob', 0.0)
+        )
+        model_path = str(model_path_arg or GRCONVNET_MODEL_PATH)
 
-        # Load weights
-        state_dict = torch.load(
-            model_path, map_location=self.device, weights_only=False)
-        model.load_state_dict(state_dict)
-        model.to(self.device).eval()
+        try:
+            state_dict = torch.load(
+                model_path, map_location=self.device, weights_only=False)
+            model.load_state_dict(state_dict)
+            model.to(self.device).eval()
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load GR-ConvNet weights: {Path(model_path).name} ({e})")
 
         logger.info(f"📦 Model loaded from {Path(model_path).name}")
         return model
@@ -227,7 +214,7 @@ class GraspDetector:
         try:
             # Visualize input
             self.visualizer.visualize_input_frame(
-                depth_image, f"{self.model_type.upper()} Input")
+                depth_image, "GR-ConvNet Input")
 
             # 1. Preprocess (returns depth map + median depth)
             input_tensor, depth_resized_m, median_depth_m = self.preprocessor.preprocess(
@@ -241,15 +228,10 @@ class GraspDetector:
             q_img = torch.sigmoid(pos)  # Quality
             ang_img = 0.5 * torch.atan2(sin, cos)  # Angle [-π/2, π/2]
 
-            # Width decoding (CALIBRATED multiplier from config)
-            if self.model_type == 'grconvnet':
-                width_multiplier = GRASP_DETECTION_CONFIG.get(
-                    'width_multiplier', 95.0)
-                width_img = F.relu(width) * width_multiplier
-                logger.debug(
-                    f"Using calibrated width multiplier: {width_multiplier}")
-            else:
-                width_img = F.relu(width)  # GGCNN2: direct pixel width
+            # Width decoding (calibrated multiplier from config)
+            width_multiplier = GRASP_DETECTION_CONFIG.get(
+                'width_multiplier', 95.0)
+            width_img = F.relu(width) * width_multiplier
 
             # 4. Postprocess: candidate selection
             grasp_2d = self.postprocessor.postprocess(
@@ -297,13 +279,13 @@ class GraspDetector:
                 depth_units = depth_frame.get_units()
                 depth_array = depth_array.astype(np.float32) * depth_units
 
-        # Color (if needed)
-        color_array = None
-        if self.use_rgbd and color_frame is not None:
-            if isinstance(color_frame, np.ndarray):
-                color_array = color_frame
-            else:
-                color_array = np.asanyarray(color_frame.get_data())
+        # Color (required for GR-ConvNet)
+        if color_frame is None:
+            raise ValueError("color_frame required for GR-ConvNet")
+        if isinstance(color_frame, np.ndarray):
+            color_array = color_frame
+        else:
+            color_array = np.asanyarray(color_frame.get_data())
 
         return depth_array, color_array
 
@@ -351,5 +333,6 @@ class GraspDetector:
         logger.info("Grasp detector cleanup complete")
 
 
-# Backward compatibility: Alias for existing code
-GGcnn2Module = GraspDetector
+__all__ = [
+    'GraspDetector'
+]

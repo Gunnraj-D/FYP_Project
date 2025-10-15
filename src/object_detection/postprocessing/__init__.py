@@ -9,6 +9,7 @@ Exports:
 """
 
 import numpy as np
+import cv2
 import logging
 from typing import Optional, Dict, List, Tuple
 
@@ -20,10 +21,12 @@ from .candidate_selection import (
     RobotiqGripperConfig,
     depth_foreground_mask,
     topk_local_maxima,
+    topk_local_maxima_hybrid,
     compute_border_distance,
     compute_grasp_rectangle_overlap,
     normalize_grasp_angle,
-    compute_pca_angle
+    compute_pca_angle,
+    compute_center_distance
 )
 from .scoring import (
     GraspScorer,
@@ -51,13 +54,21 @@ def best_angle_mapping(angle_raw: float, object_mask: np.ndarray,
     if depth_map is not None and u is not None and v is not None:
         pca_angle = compute_pca_angle(depth_map, object_mask, u, v, width_px)
 
-        # Choose closest to PCA
+        mode = GRASP_DETECTION_CONFIG.get('pca_align_mode', 'align')
+        if mode == 'perpendicular':
+            target = normalize_grasp_angle(pca_angle + np.pi/2)
+        else:
+            target = normalize_grasp_angle(pca_angle)
+
         candidates = [angle_raw, angle_raw + np.pi/2, angle_raw - np.pi/2]
         candidates = [normalize_grasp_angle(a) for a in candidates]
 
-        diffs = [abs(normalize_grasp_angle(a - pca_angle)) for a in candidates]
-        best_idx = np.argmin(diffs)
+        def circ_dist(a, b):
+            d = abs(a - b) % np.pi
+            return min(d, np.pi - d)
 
+        diffs = [circ_dist(a, target) for a in candidates]
+        best_idx = np.argmin(diffs)
         return candidates[best_idx]
     else:
         # Fallback to raw angle
@@ -86,7 +97,7 @@ class GraspPostprocessor:
     Configuration via GRASP_DETECTION_CONFIG.
     """
 
-    def __init__(self, camera_manager, temporal_filter: Optional[TemporalAngleFilter] = None):
+    def __init__(self, camera_manager, temporal_filter: Optional[TemporalAngleFilter] = None, visualizer=None):
         """
         Args:
             camera_manager: CameraManager instance for intrinsics and depth sampling
@@ -95,6 +106,7 @@ class GraspPostprocessor:
         self.camera_manager = camera_manager
         self.temporal_filter = temporal_filter or TemporalAngleFilter(
             enabled=False)
+        self.visualizer = visualizer
 
         # Gripper configuration
         self.gripper = RobotiqGripperConfig(
@@ -116,9 +128,10 @@ class GraspPostprocessor:
         self.min_overlap = GRASP_DETECTION_CONFIG.get('min_overlap', 0.25)
         self.use_pca_correction = GRASP_DETECTION_CONFIG.get(
             'use_pca_angle_correction', True)
-        self.nms_dilate = GRASP_DETECTION_CONFIG.get('nms_dilate_size', 9)
-        self.nms_threshold = GRASP_DETECTION_CONFIG.get(
-            'nms_min_threshold', 0.03)
+        # More permissive defaults to recover weak signals
+        self.nms_dilate = int(GRASP_DETECTION_CONFIG.get('nms_dilate_size', 5))
+        self.nms_threshold = float(GRASP_DETECTION_CONFIG.get(
+            'nms_min_threshold', 0.01))
 
         # Scoring weights
         default_weights = {'q': 1.0, 'o': 1.2, 'b': 0.5, 'w': 0.7, 't': 0.8}
@@ -182,73 +195,288 @@ class GraspPostprocessor:
             object_mask = np.ones_like(q_np, dtype=bool)
             median_depth_m = 0.5
 
-        # NMS: Select local maxima
+        # Quality diagnostics (global and in-mask)
+        try:
+            logger.info(
+                f"Quality map stats: min={q_np.min():.4f}, max={q_np.max():.4f}, "
+                f"mean={q_np.mean():.4f}, median={np.median(q_np):.4f}")
+            if object_mask.any():
+                logger.info(
+                    f"Quality in mask: max={q_np[object_mask].max():.4f}, "
+                    f"mean={q_np[object_mask].mean():.4f}")
+        except Exception:
+            pass
+
+        # Optional debug visualization of masks
+        try:
+            if self.visualizer is not None and DEBUG_MODE:
+                self.visualizer.visualize_debug_masks(
+                    depth_image if depth_image is not None else q_np, object_mask, q_np)
+        except Exception:
+            pass
+
+        # Optional plane-based table suppression to avoid table being treated as object
+        try:
+            if not GRASP_DETECTION_CONFIG.get('use_plane_suppression', False):
+                raise RuntimeError('disabled')
+            if depth_image is not None and self.camera_manager is not None and self.camera_manager.is_ready():
+                intr = self.camera_manager.aligned_color_intrinsics
+                if intr:
+                    # Scale intrinsics to 300x300
+                    sx = 300.0 / float(intr.width)
+                    sy = 300.0 / float(intr.height)
+                    fx_s = intr.fx * sx
+                    fy_s = intr.fy * sy
+                    cx_s = intr.ppx * sx
+                    cy_s = intr.ppy * sy
+
+                    # Build subsampled 3D point cloud
+                    zs = depth_image
+                    h, w = zs.shape
+                    step = 4
+                    us, vs = np.meshgrid(
+                        np.arange(0, w, step), np.arange(0, h, step))
+                    z_samples = zs[vs, us]
+                    valid = z_samples > 0
+                    if np.count_nonzero(valid) >= 200:
+                        us_v = us[valid].astype(np.float32)
+                        vs_v = vs[valid].astype(np.float32)
+                        z_v = z_samples[valid].astype(np.float32)
+                        x_v = (us_v - cx_s) * z_v / fx_s
+                        y_v = (vs_v - cy_s) * z_v / fy_s
+                        pts = np.stack([x_v, y_v, z_v], axis=1)
+
+                        # RANSAC plane fit
+                        best_inliers = 0
+                        best_n = None
+                        best_d = None
+                        N = pts.shape[0]
+                        iters = 200
+                        dist_thr = 0.01  # 1 cm
+                        rng = np.random.default_rng(42)
+                        for _ in range(iters):
+                            idx = rng.choice(N, size=3, replace=False)
+                            p1, p2, p3 = pts[idx]
+                            v1 = p2 - p1
+                            v2 = p3 - p1
+                            n = np.cross(v1, v2)
+                            norm = np.linalg.norm(n)
+                            if norm < 1e-6:
+                                continue
+                            n = n / norm
+                            d = -np.dot(n, p1)
+                            dists = np.abs(pts @ n + d)
+                            inliers = int(np.count_nonzero(dists <= dist_thr))
+                            if inliers > best_inliers:
+                                best_inliers = inliers
+                                best_n = n
+                                best_d = d
+
+                        if best_n is not None and best_inliers >= 0.2 * N:
+                            # Orient normal so deeper border points have positive distance
+                            # Use border samples from full image
+                            border_margin = max(6, min(h, w) // 12)
+                            border_mask = np.zeros_like(zs, dtype=bool)
+                            border_mask[:border_margin, :] = True
+                            border_mask[-border_margin:, :] = True
+                            border_mask[:, :border_margin] = True
+                            border_mask[:, -border_margin:] = True
+                            border_valid = border_mask & (zs > 0)
+                            if np.count_nonzero(border_valid) > 50:
+                                u_b, v_b = np.meshgrid(
+                                    np.arange(w), np.arange(h))
+                                u_b = u_b[border_valid].astype(np.float32)
+                                v_b = v_b[border_valid].astype(np.float32)
+                                z_b = zs[border_valid].astype(np.float32)
+                                x_b = (u_b - cx_s) * z_b / fx_s
+                                y_b = (v_b - cy_s) * z_b / fy_s
+                                pts_b = np.stack([x_b, y_b, z_b], axis=1)
+                                mean_border_sign = float(
+                                    np.mean(pts_b @ best_n + best_d))
+                                if mean_border_sign < 0:
+                                    best_n = -best_n
+                                    best_d = -best_d
+
+                            # Compute distances for all pixels
+                            u_full, v_full = np.meshgrid(
+                                np.arange(w), np.arange(h))
+                            z_full = zs
+                            valid_full = z_full > 0
+                            x_full = (u_full - cx_s) * z_full / fx_s
+                            y_full = (v_full - cy_s) * z_full / fy_s
+                            d_full = (
+                                x_full * best_n[0] + y_full * best_n[1] + z_full * best_n[2] + best_d)
+
+                            # Table mask: near plane
+                            table_mask = np.abs(d_full) <= dist_thr
+
+                            # Object mask: sufficiently above (closer to camera) than plane
+                            # Use 10 mm offset as default
+                            obj_offset = float(GRASP_DETECTION_CONFIG.get(
+                                'object_above_table_offset_m', 0.010))
+                            object_plane_mask = (
+                                d_full < -obj_offset) & valid_full
+
+                            # Combine: treat table as background, keep original foreground too
+                            object_mask = (object_mask | object_plane_mask) & (
+                                ~table_mask)
+                            object_mask = object_mask.astype(bool)
+        except Exception as e:
+            logger.debug(f"Plane segmentation skipped: {e}")
+
+        # Combine with quality-based mask to preserve high-quality edges
+        if GRASP_DETECTION_CONFIG.get('use_quality_union', False):
+            try:
+                q_thr = max(self.nms_threshold, float(np.percentile(q_np, 60)))
+                q_mask = (q_np >= q_thr)
+                object_mask = np.logical_or(object_mask, q_mask)
+            except Exception:
+                pass
+
+        # Interior mask using distance transform
+        try:
+            if not GRASP_DETECTION_CONFIG.get('use_interior_center_check', False):
+                raise RuntimeError('disabled')
+            edge_margin_px = int(
+                GRASP_DETECTION_CONFIG.get('edge_margin_px', 4))
+            dt = cv2.distanceTransform(
+                (object_mask.astype(np.uint8) * 255), cv2.DIST_L2, 3)
+            interior_mask = dt >= float(edge_margin_px)
+            if interior_mask.sum() == 0:
+                interior_mask = object_mask
+        except Exception:
+            interior_mask = object_mask
+            dt = None
+
+        # Boost quality inside object mask if configured
+        if GRASP_DETECTION_CONFIG.get('boost_masked_quality', False):
+            boost_factor = float(GRASP_DETECTION_CONFIG.get(
+                'quality_boost_factor', 1.3))
+            q_boosted = q_np.copy()
+            needs_boost = (q_np < 0.5) & object_mask
+            q_boosted[needs_boost] = np.clip(
+                q_boosted[needs_boost] * boost_factor, 0.0, 0.95)
+            logger.info(
+                f"Quality boost: max={q_np.max():.3f} → {q_boosted.max():.3f}")
+            q_np = q_boosted
+
+        # NMS: Select local maxima (hybrid if available)
         k_actual = min(top_k, q_np.size)
-        top_indices = topk_local_maxima(q_np, k_actual,
-                                        dilate_size=self.nms_dilate,
-                                        min_thr=self.nms_threshold)
+        try:
+            # width_np path aligns with ang/width decode upstream
+            width_np = width_np
+            top_indices = topk_local_maxima_hybrid(q_np, width_np, object_mask, k_actual,
+                                                   dilate_size=self.nms_dilate,
+                                                   min_thr=self.nms_threshold)
+            if top_indices.size == 0:
+                top_indices = topk_local_maxima(q_np, k_actual,
+                                                dilate_size=self.nms_dilate,
+                                                min_thr=self.nms_threshold)
+        except Exception:
+            top_indices = topk_local_maxima(q_np, k_actual,
+                                            dilate_size=self.nms_dilate,
+                                            min_thr=self.nms_threshold)
 
-        # Analyze all candidates
-        candidates = []
-        for idx in top_indices:
-            v, u = np.unravel_index(idx, q_np.shape)
+        def evaluate(use_interior: bool) -> Optional[GraspCandidate]:
+            candidates = []
+            for idx in top_indices:
+                v, u = np.unravel_index(idx, q_np.shape)
 
-            # Local depth estimation
-            if depth_image is not None:
-                win = 4
-                v0, v1 = max(
-                    0, v - win), min(depth_image.shape[0], v + win + 1)
-                u0, u1 = max(
-                    0, u - win), min(depth_image.shape[1], u + win + 1)
-                local = depth_image[v0:v1, u0:u1]
-                local_valid = local[local > 0]
-                local_depth_m = float(
-                    np.median(local_valid)) if local_valid.size > 0 else median_depth_m
-            else:
-                local_depth_m = median_depth_m
+                if use_interior and not interior_mask[v, u]:
+                    continue
 
-            # Convert width using camera intrinsics
-            px_to_mm = self._compute_px_to_mm(local_depth_m)
+                if depth_image is not None:
+                    win = 4
+                    v0, v1 = max(
+                        0, v - win), min(depth_image.shape[0], v + win + 1)
+                    u0, u1 = max(
+                        0, u - win), min(depth_image.shape[1], u + win + 1)
+                    local = depth_image[v0:v1, u0:u1]
+                    local_valid = local[local > 0]
+                    local_depth_m = float(
+                        np.median(local_valid)) if local_valid.size > 0 else median_depth_m
+                else:
+                    local_depth_m = median_depth_m
 
-            quality = float(q_np[v, u])
-            angle_rad_raw = float(ang_np[v, u])
-            width_px = float(width_np[v, u])
-            width_mm = width_px * px_to_mm
+                px_to_mm = self._compute_px_to_mm(local_depth_m)
+                quality = float(q_np[v, u])
+                angle_rad_raw = float(ang_np[v, u])
+                width_px = float(width_np[v, u])
+                width_mm = width_px * px_to_mm
 
-            # PCA-based angle correction
-            if self.use_pca_correction and depth_image is not None:
-                angle_rad = best_angle_mapping(angle_rad_raw, object_mask,
-                                               depth_image, u, v, width_px)
-            else:
-                angle_rad = normalize_grasp_angle(angle_rad_raw)
+                cand_angles = [angle_rad_raw, angle_rad_raw +
+                               np.pi/2, angle_rad_raw - np.pi/2]
+                ov_scores = [
+                    compute_grasp_rectangle_overlap(
+                        u, v, normalize_grasp_angle(a), width_px, object_mask)
+                    for a in cand_angles
+                ]
+                best_idx = int(np.argmax(ov_scores))
+                angle_rad = normalize_grasp_angle(cand_angles[best_idx])
 
-            # Compute metrics
-            border_dist = compute_border_distance(
-                u, v, q_np.shape, normalized=True)
-            overlap = compute_grasp_rectangle_overlap(
-                u, v, angle_rad, width_px, object_mask)
+                border_dist = compute_border_distance(
+                    u, v, q_np.shape, normalized=True)
+                overlap = compute_grasp_rectangle_overlap(
+                    u, v, angle_rad, width_px, object_mask)
 
-            # Validate
-            is_valid, reason = self._validate_grasp(
-                width_mm, overlap, border_dist)
+                # Center distance and validation with slight relaxation near edge band
+                center_dist = compute_center_distance(
+                    u, v, object_mask, normalized=True)
 
-            candidate = GraspCandidate(
-                u=int(u), v=int(v),
-                angle_rad=angle_rad,
-                angle_rad_raw=angle_rad_raw,
-                quality=quality,
-                width_px=width_px,
-                width_mm=width_mm,
-                local_depth_m=local_depth_m,
-                object_overlap=overlap,
-                border_distance=border_dist,
-                is_valid=is_valid,
-                validity_reason=reason
-            )
-            candidates.append(candidate)
+                tmp_min_overlap = self.min_overlap
+                try:
+                    edge_band_px = int(
+                        GRASP_DETECTION_CONFIG.get('edge_band_px', 6))
+                    if dt is not None and dt[v, u] < float(edge_band_px):
+                        self.min_overlap = max(
+                            0.1, float(self.min_overlap) * 0.9)
+                    is_valid, reason = self._validate_grasp(
+                        width_mm, overlap, border_dist, center_dist)
+                finally:
+                    self.min_overlap = tmp_min_overlap
 
-        # Select best using multi-factor scoring
-        best_candidate = self._select_best_grasp(candidates)
+                candidate = GraspCandidate(
+                    u=int(u), v=int(v),
+                    angle_rad=angle_rad,
+                    angle_rad_raw=angle_rad_raw,
+                    quality=quality,
+                    width_px=width_px,
+                    width_mm=width_mm,
+                    local_depth_m=local_depth_m,
+                    object_overlap=overlap,
+                    border_distance=border_dist,
+                    center_distance=center_dist,
+                    is_valid=is_valid,
+                    validity_reason=reason
+                )
+                candidates.append(candidate)
+
+            # Debug: candidate counts and first few reasons
+            try:
+                logger.info(f"Postprocess candidates: total={len(candidates)}")
+                for c in candidates[:5]:
+                    logger.info(
+                        f"  cand @({c.u},{c.v}) q={c.quality:.3f} ov={c.object_overlap:.2f} b={c.border_distance:.2f} w={c.width_mm:.1f}mm valid={c.is_valid} reason={c.validity_reason}")
+            except Exception:
+                pass
+
+            return self._select_best_grasp(candidates)
+
+        old_min_overlap = self.min_overlap
+        old_border_thr = GRASP_DETECTION_CONFIG.get('border_threshold', 0.2)
+
+        best_candidate = evaluate(use_interior=True)
+        if best_candidate is None:
+            best_candidate = evaluate(use_interior=False)
+        if best_candidate is None:
+            try:
+                self.min_overlap = max(0.1, float(self.min_overlap) * 0.7)
+                GRASP_DETECTION_CONFIG['border_threshold'] = max(
+                    0.1, float(old_border_thr) * 0.8)
+                best_candidate = evaluate(use_interior=False)
+            finally:
+                self.min_overlap = old_min_overlap
+                GRASP_DETECTION_CONFIG['border_threshold'] = old_border_thr
 
         if best_candidate is None:
             logger.warning("No valid grasp found after scoring")
@@ -296,7 +524,7 @@ class GraspPostprocessor:
             return horizontal_extent_mm / 300.0
 
     def _validate_grasp(self, width_mm: float, overlap: float,
-                        border_dist: float) -> Tuple[bool, str]:
+                        border_dist: float, center_dist: float = 1.0) -> Tuple[bool, str]:
         """
         Validate grasp against multiple constraints.
 
@@ -309,13 +537,21 @@ class GraspPostprocessor:
         elif width_mm > self.gripper.max_grasp_width_mm:
             return False, f"Too wide ({width_mm:.1f}mm > {self.gripper.max_grasp_width_mm}mm)"
 
-        # Overlap constraint
-        if overlap < self.min_overlap:
-            return False, f"Low overlap ({overlap:.2f} < {self.min_overlap})"
+        # Overlap constraint (stricter if far from center)
+        min_overlap_required = self.min_overlap
+        if center_dist < 0.5:
+            min_overlap_required *= 1.3
+        if overlap < min_overlap_required:
+            return False, f"Low overlap ({overlap:.2f} < {min_overlap_required:.2f})"
 
         # Border constraint
-        if border_dist < 0.2:
+        border_thr = GRASP_DETECTION_CONFIG.get('border_threshold', 0.2)
+        if border_dist < border_thr:
             return False, f"Too close to border ({border_dist:.2f})"
+
+        # Prefer center grasps
+        if center_dist < 0.3:
+            return False, f"Too far from center ({center_dist:.2f})"
 
         # All constraints passed
         if self.gripper.optimal_grasp_range[0] <= width_mm <= self.gripper.optimal_grasp_range[1]:
