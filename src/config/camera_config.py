@@ -30,6 +30,7 @@ CAMERA_ROTATION_EULER = {
 # Camera transform mode: 'calibrated' or 'simple'
 # - 'calibrated': Use full calibrated hand-eye matrix with rotation and translation
 # - 'simple': Camera on TCP with 180° X rotation (pointing down), no translation offset
+# Using calibrated - should have correct camera position
 CAMERA_TRANSFORM_MODE = 'calibrated'
 
 # Hand-eye transformation matrix: tcp_T_camera (Camera frame → TCP frame)
@@ -52,9 +53,9 @@ HAND_EYE_MATRIX_CALIBRATED = np.array([
 
 # Simplified hand-eye matrix: tcp_T_camera (camera mounted on TCP, pointing down)
 HAND_EYE_MATRIX_SIMPLE = np.array([
-    [1.0,   0.0,   0.0,  0.0],    # X-axis unchanged (right)
-    [0.0,  -1.0,   0.0,  0.0],    # Y-axis flipped (camera Y+ = TCP Y-)
-    [0.0,   0.0,   1.0,  0.0],    # Z-axis unchanged (camera depth = TCP down)
+    [1.0,   0.0,   0.0,  0.0],   # X-axis unchanged (right)
+    [0.0,  -1.0,   0.0,  0.0],   # Y-axis flipped (camera Y+ = TCP Y-)
+    [0.0,   0.0,  -1.0,  0.0],   # Z-axis NEGATED (camera depth away = TCP up)
     [0.0,   0.0,   0.0,  1.0]
 ], dtype=np.float64)
 

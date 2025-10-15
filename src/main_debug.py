@@ -77,6 +77,8 @@ logging.getLogger(
     'object_detection.postprocessing.__init__').setLevel(logging.INFO)
 logging.getLogger(
     'object_detection.postprocessing.candidate_selection').setLevel(logging.INFO)
+logging.getLogger('object_detection.grasp_transforms').setLevel(
+    logging.WARNING)
 
 # Suppress additional noisy loggers
 warnings.filterwarnings("ignore", category=UserWarning,
@@ -575,6 +577,8 @@ class DebugSystemManager:
                         print(f"✅ Profile set: {self.profile_name}")
                     else:
                         print("❌ Usage: profile <name>")
+                elif command == "debug":
+                    self._toggle_grasp_debug()
                 elif command == "force":
                     self.force_complete_execution()
                 elif command == "status":
@@ -619,6 +623,7 @@ class DebugSystemManager:
         print("  seq <number> - Execute sequencer by number")
         print("  camera - Toggle camera transform mode (calibrated/simple)")
         print("  camera info - Show camera transform details")
+        print("  debug - Toggle grasp height debugging")
         print("  force - Force completion of current execution")
         print("  status - Show system status")
         print("  help - Show this help")
@@ -760,13 +765,41 @@ class DebugSystemManager:
         except Exception as e:
             print(f"❌ Error executing sequencer: {e}")
 
+    def _toggle_grasp_debug(self):
+        """Toggle grasp height debugging on/off."""
+        try:
+            from object_detection.grasp_debug import enable_grasp_debug, _grasp_debugger
+
+            # Toggle the debug state
+            _grasp_debugger.enabled = not _grasp_debugger.enabled
+            enable_grasp_debug(_grasp_debugger.enabled)
+
+            status = "enabled" if _grasp_debugger.enabled else "disabled"
+            print(f"🔍 Grasp height debugging {status}")
+
+            if _grasp_debugger.enabled:
+                print("   Debug images will be saved to: grasp_debug/")
+                print("   Issues will be logged during grasp detection")
+            else:
+                print("   Debug images and logging disabled")
+
+        except Exception as e:
+            print(f"❌ Failed to toggle grasp debug: {e}")
+
     def _show_system_status(self):
         """Show current system status."""
+        try:
+            from object_detection.grasp_debug import _grasp_debugger
+            debug_status = "enabled" if _grasp_debugger.enabled else "disabled"
+        except:
+            debug_status = "unknown"
+
         if self.system:
             status = self.system.get_system_status()
             print(f"\n📊 System Status: {status}")
             print(f"🔄 Execution Active: {self.execution_active}")
             print(f"⚡ Force Complete: {self.force_complete}")
+            print(f"🔍 Grasp Debug: {debug_status}")
         else:
             print("❌ System not initialized")
 

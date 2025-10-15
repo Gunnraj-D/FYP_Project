@@ -195,26 +195,6 @@ class GraspPostprocessor:
             object_mask = np.ones_like(q_np, dtype=bool)
             median_depth_m = 0.5
 
-        # Quality diagnostics (global and in-mask)
-        try:
-            logger.info(
-                f"Quality map stats: min={q_np.min():.4f}, max={q_np.max():.4f}, "
-                f"mean={q_np.mean():.4f}, median={np.median(q_np):.4f}")
-            if object_mask.any():
-                logger.info(
-                    f"Quality in mask: max={q_np[object_mask].max():.4f}, "
-                    f"mean={q_np[object_mask].mean():.4f}")
-        except Exception:
-            pass
-
-        # Optional debug visualization of masks
-        try:
-            if self.visualizer is not None and DEBUG_MODE:
-                self.visualizer.visualize_debug_masks(
-                    depth_image if depth_image is not None else q_np, object_mask, q_np)
-        except Exception:
-            pass
-
         # Optional plane-based table suppression to avoid table being treated as object
         try:
             if not GRASP_DETECTION_CONFIG.get('use_plane_suppression', False):
@@ -356,26 +336,24 @@ class GraspPostprocessor:
             needs_boost = (q_np < 0.5) & object_mask
             q_boosted[needs_boost] = np.clip(
                 q_boosted[needs_boost] * boost_factor, 0.0, 0.95)
-            logger.info(
-                f"Quality boost: max={q_np.max():.3f} → {q_boosted.max():.3f}")
             q_np = q_boosted
 
         # NMS: Select local maxima (hybrid if available)
         k_actual = min(top_k, q_np.size)
         try:
-            # width_np path aligns with ang/width decode upstream
-            width_np = width_np
-            top_indices = topk_local_maxima_hybrid(q_np, width_np, object_mask, k_actual,
-                                                   dilate_size=self.nms_dilate,
-                                                   min_thr=self.nms_threshold)
+            top_indices = topk_local_maxima_hybrid(
+                q_np, width_np, object_mask, k_actual,
+                dilate_size=self.nms_dilate,
+                min_thr=self.nms_threshold
+            )
             if top_indices.size == 0:
-                top_indices = topk_local_maxima(q_np, k_actual,
-                                                dilate_size=self.nms_dilate,
-                                                min_thr=self.nms_threshold)
+                top_indices = topk_local_maxima(
+                    q_np, k_actual, dilate_size=self.nms_dilate, min_thr=self.nms_threshold
+                )
         except Exception:
-            top_indices = topk_local_maxima(q_np, k_actual,
-                                            dilate_size=self.nms_dilate,
-                                            min_thr=self.nms_threshold)
+            top_indices = topk_local_maxima(
+                q_np, k_actual, dilate_size=self.nms_dilate, min_thr=self.nms_threshold
+            )
 
         def evaluate(use_interior: bool) -> Optional[GraspCandidate]:
             candidates = []
@@ -385,18 +363,59 @@ class GraspPostprocessor:
                 if use_interior and not interior_mask[v, u]:
                     continue
 
+                # Local masked depth estimation - SIMPLE MEDIAN METHOD
                 if depth_image is not None:
-                    win = 4
+                    radius = 8
                     v0, v1 = max(
-                        0, v - win), min(depth_image.shape[0], v + win + 1)
+                        0, v - radius), min(depth_image.shape[0], v + radius + 1)
                     u0, u1 = max(
-                        0, u - win), min(depth_image.shape[1], u + win + 1)
-                    local = depth_image[v0:v1, u0:u1]
-                    local_valid = local[local > 0]
-                    local_depth_m = float(
-                        np.median(local_valid)) if local_valid.size > 0 else median_depth_m
+                        0, u - radius), min(depth_image.shape[1], u + radius + 1)
+                    local_depth = depth_image[v0:v1, u0:u1]
+                    local_mask = object_mask[v0:v1, u0:u1]
+
+                    # Get all valid depths within the masked region
+                    # Filter: > 0.01m (10mm) to remove extreme outliers, < 1.0m for sanity
+                    obj_depths = local_depth[local_mask & (
+                        local_depth > 0.01) & (local_depth < 1.0)]
+
+                    # DEBUG: Log what we're seeing
+                    mask_pixels = np.sum(local_mask)
+                    total_pixels = local_mask.size
+
+                    logger.info(
+                        f"🔍 Depth at ({u},{v}): mask={mask_pixels}/{total_pixels} ({100*mask_pixels/total_pixels:.0f}%), valid_depths={obj_depths.size}")
+                    if obj_depths.size > 0:
+                        logger.info(
+                            f"   Range: {obj_depths.min():.3f}m - {obj_depths.max():.3f}m, median={np.median(obj_depths):.3f}m")
+
+                    if obj_depths.size >= 5:
+                        # Use 15th percentile - finds object surface even if most pixels show table
+                        # 15th percentile is safer than 10th to avoid noise
+                        sorted_depths = np.sort(obj_depths)
+                        n_samples = max(5, int(len(sorted_depths) * 0.15))
+                        shallow_samples = sorted_depths[:n_samples]
+                        local_depth_m = float(np.median(shallow_samples))
+
+                        cell_mins = list(shallow_samples[:9]) if len(
+                            shallow_samples) >= 9 else list(shallow_samples)
+                        median_of_mins = local_depth_m
+                        logger.info(
+                            f"   ✅ Calc depth: {local_depth_m:.3f}m (15th %ile median, {n_samples} pts)")
+                    else:
+                        # Fallback: use global median if not enough local data
+                        local_depth_m = median_depth_m
+                        median_of_mins = None
+                        cell_mins = None
+                        logger.warning(
+                            f"   ⚠️ Fallback to global {median_depth_m:.3f}m (only {obj_depths.size} points)")
                 else:
                     local_depth_m = median_depth_m
+                    median_of_mins = None
+                    cell_mins = None
+
+                # Debug grasp height estimation
+                self._debug_grasp_height(u, v, depth_image, object_mask, q_np,
+                                         local_depth_m, median_depth_m, cell_mins, median_of_mins)
 
                 px_to_mm = self._compute_px_to_mm(local_depth_m)
                 quality = float(q_np[v, u])
@@ -419,10 +438,8 @@ class GraspPostprocessor:
                 overlap = compute_grasp_rectangle_overlap(
                     u, v, angle_rad, width_px, object_mask)
 
-                # Center distance and validation with slight relaxation near edge band
                 center_dist = compute_center_distance(
                     u, v, object_mask, normalized=True)
-
                 tmp_min_overlap = self.min_overlap
                 try:
                     edge_band_px = int(
@@ -451,7 +468,7 @@ class GraspPostprocessor:
                 )
                 candidates.append(candidate)
 
-            # Debug: candidate counts and first few reasons
+            # Debug: candidate counts and reasons (first 5)
             try:
                 logger.info(f"Postprocess candidates: total={len(candidates)}")
                 for c in candidates[:5]:
@@ -500,7 +517,9 @@ class GraspPostprocessor:
             'depth_m': best_candidate.local_depth_m,
             'width_m': best_candidate.width_mm / 1000.0,  # Convert to meters
             'object_overlap': best_candidate.object_overlap,
-            'border_distance': best_candidate.border_distance
+            'border_distance': best_candidate.border_distance,
+            # Provide mask so downstream can sample depth within mask in original frame
+            'object_mask': object_mask
         }
 
     def _compute_px_to_mm(self, depth_m: float) -> float:
@@ -591,6 +610,38 @@ class GraspPostprocessor:
                 )
 
         return best
+
+    def _debug_grasp_height(self, u: int, v: int, depth_image: Optional[np.ndarray],
+                            object_mask: np.ndarray, quality_map: np.ndarray,
+                            local_depth_m: float, median_depth_m: float,
+                            cell_mins: Optional[List[float]], median_of_mins: Optional[float]):
+        """Debug grasp height estimation (isolated method to avoid variable scope issues)."""
+        if not DEBUG_MODE or depth_image is None:
+            return
+
+        try:
+            from object_detection.grasp_debug import _grasp_debugger
+            if not _grasp_debugger.enabled:
+                return
+
+            logger.info(f"🔍 Debugging grasp height at ({u},{v})")
+            debug_result = _grasp_debugger.debug_grasp_height_detailed(
+                grasp_location=(u, v),
+                depth_image=depth_image,
+                object_mask=object_mask,
+                quality_map=quality_map,
+                local_depth_estimate=local_depth_m,
+                global_depth_estimate=median_depth_m,
+                grid_cell_mins=cell_mins,
+                median_of_mins=median_of_mins
+            )
+
+            if debug_result and debug_result.potential_issues:
+                logger.warning(
+                    f"🔍 Issues at ({u},{v}): {', '.join(debug_result.potential_issues)}")
+        except Exception as e:
+            import traceback
+            logger.debug(f"Debug failed: {e}\n{traceback.format_exc()}")
 
 
 # ============================================================================

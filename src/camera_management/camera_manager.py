@@ -241,7 +241,9 @@ class CameraManager:
 
     def get_average_depth(self, depth_frame: rs.depth_frame,
                           center: Tuple[int, int], radius: int,
-                          min_valid_pixels: int = 5) -> Tuple[Optional[float], dict]:
+                          min_valid_pixels: int = 5,
+                          method: str = 'median',
+                          percentile_low: float = 15.0) -> Tuple[Optional[float], dict]:
         """
         Get depth statistics in circular ROI.
 
@@ -299,7 +301,15 @@ class CameraManager:
                 if clipped.size >= max(5, int(0.5 * valid_count)):
                     valid_depths_m = clipped
 
-            median_depth_m = float(np.median(valid_depths_m))
+            if method == 'min':
+                median_depth_m = float(np.min(valid_depths_m))
+            elif method in ('p_low', 'percentile_low'):
+                p = float(percentile_low)
+                p = np.clip(p, 0.0, 50.0)
+                median_depth_m = float(np.percentile(valid_depths_m, p))
+            else:
+                median_depth_m = float(np.median(valid_depths_m))
+
             depth_std_m = float(np.std(valid_depths_m))
 
             quality = {

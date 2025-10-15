@@ -78,8 +78,14 @@ GRASP_DETECTION_CONFIG = {
 
     # Approach configuration
     'approach_height_offset': 0.050,    # Height offset for approach (meters)
-    # Depth offset for grasp (meters) - raised by 15mm to compensate
-    'grasp_depth_offset': 0.04,
+
+    # Table height and calibration correction
+    # Table Z coordinate in base frame (meters)
+    'table_height_base_frame': 0.142,
+    # Depth offset: calibration correction only
+    # Original offset was 0.04, gripper was 10cm too high
+    # So we need LESS offset, not more
+    'grasp_depth_offset': -0.06,  # -60mm: reduce by 100mm from original 40mm
     'vertical_approach': True,          # Use vertical approach angle
     'approach_angle': -90.0,            # Approach angle in degrees
     'frame_processing_interval': 0.5,   # Process frames every N seconds
@@ -156,6 +162,9 @@ GRASP_DETECTION_CONFIG = {
     'boost_masked_quality': True,
     'denoise_quality': True,
     'use_geometric_fallback': True,
+    # Depth sampling method for ROI: 'median' (default), 'min', or 'p_low' (percentile)
+    'depth_sample_method': 'p_low',
+    'depth_sample_percentile': 15.0,
     # Minimum pixel distance from object edge for interior center check
     'edge_margin_px': 6,
 

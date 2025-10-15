@@ -75,13 +75,55 @@ class GraspTransformer:
             center_u_scaled = center_u * scale_u
             center_v_scaled = center_v * scale_v
 
-            # Get depth at grasp center
-            depth_source = original_depth_frame if original_depth_frame else depth_image
-            depth_m, _quality = self.camera_manager.get_average_depth(
-                depth_source,
-                (int(center_u_scaled), int(center_v_scaled)),
-                radius=GRASP_DETECTION_CONFIG.get('depth_sample_radius', 5)
-            )
+            # Get depth - PREFER the pre-calculated depth from postprocessor
+            depth_m = grasp_2d.get('depth_m', None)
+            logger.warning(f"🔍 TRANSFORM: grasp_2d depth_m = {depth_m}")
+
+            if depth_m is not None and depth_m > 0:
+                logger.warning(
+                    f"✅ USING PRE-CALC DEPTH: {depth_m:.3f}m from postprocessor")
+            else:
+                logger.warning(
+                    f"⚠️ NO VALID PRE-CALC DEPTH (got {depth_m}), re-sampling...")
+                # Fallback: recalculate depth at grasp center
+                depth_m = None
+                if isinstance(depth_image, np.ndarray) and 'object_mask' in grasp_2d and grasp_2d['object_mask'] is not None:
+                    radius_px = int(GRASP_DETECTION_CONFIG.get(
+                        'depth_sample_radius', 5))
+                    u0 = max(0, int(center_u) - radius_px)
+                    u1 = min(depth_image.shape[1], int(
+                        center_u) + radius_px + 1)
+                    v0 = max(0, int(center_v) - radius_px)
+                    v1 = min(depth_image.shape[0], int(
+                        center_v) + radius_px + 1)
+                    roi = depth_image[v0:v1, u0:u1]
+                    mroi = grasp_2d['object_mask'][v0:v1, u0:u1]
+                    vals = roi[(roi > 0) & (mroi.astype(bool))]
+                    if vals.size > 0:
+                        method = GRASP_DETECTION_CONFIG.get(
+                            'depth_sample_method', 'p_low')
+                        if method == 'min':
+                            depth_m = float(np.min(vals))
+                        elif method in ('p_low', 'percentile'):
+                            p = float(GRASP_DETECTION_CONFIG.get(
+                                'depth_sample_percentile', 15.0))
+                            p = np.clip(p, 0.0, 50.0)
+                            depth_m = float(np.percentile(vals, p))
+                        else:
+                            depth_m = float(np.median(vals))
+
+            if depth_m is None or depth_m <= 0:
+                depth_source = original_depth_frame if original_depth_frame else depth_image
+                depth_m, _quality = self.camera_manager.get_average_depth(
+                    depth_source,
+                    (int(center_u_scaled), int(center_v_scaled)),
+                    radius=GRASP_DETECTION_CONFIG.get(
+                        'depth_sample_radius', 5),
+                    method=GRASP_DETECTION_CONFIG.get(
+                        'depth_sample_method', 'p_low'),
+                    percentile_low=float(GRASP_DETECTION_CONFIG.get(
+                        'depth_sample_percentile', 15.0))
+                )
 
             if depth_m is None or depth_m <= 0:
                 logger.warning(f"Invalid depth at grasp center: depth={depth_m}, "
@@ -92,6 +134,19 @@ class GraspTransformer:
             x, y, z = self.camera_manager.pixel_to_3d(
                 int(center_u_scaled), int(center_v_scaled), depth_m
             )
+
+            # CONDITIONAL Z negation based on transform mode
+            from config import CAMERA_TRANSFORM_MODE
+            if CAMERA_TRANSFORM_MODE == 'simple':
+                # Simple mode needs Z negation for downward camera
+                z = -z
+                z_note = "[Z negated for simple mode]"
+            else:
+                # Calibrated mode - matrix already accounts for camera orientation
+                z_note = "[Z unchanged for calibrated mode]"
+
+            logger.warning(f"📍 pixel_to_3d: px=({int(center_u_scaled)},{int(center_v_scaled)}), "
+                           f"depth={depth_m:.3f}m → cam_xyz=({x:.3f}, {y:.3f}, {z:.3f}) {z_note}")
 
             # Create grasp orientation in camera frame with facing-down orientation
             # Use compose_grasp_orientation to create proper R_down @ R_z rotation
@@ -140,8 +195,8 @@ class GraspTransformer:
             base_position = transform_camera_to_base(
                 camera_position, tcp_matrix)
 
-            logger.info(
-                f"Position: camera={camera_position} → base={base_position}")
+            logger.warning(
+                f"🌍 Camera→Base: cam_xyz={camera_position} → base_xyz={base_position}")
 
             # Safety check: Z coordinate above workspace floor
             if base_position[2] < 0.0:

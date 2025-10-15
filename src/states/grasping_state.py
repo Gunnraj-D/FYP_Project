@@ -389,14 +389,21 @@ class GraspingState(BaseState):
             # Extract pose (already in base frame)
             grasp_pose_base = list(candidate.pose)
 
-            # Apply depth offset (raise grasp position)
+            # Apply table height correction and safety offset
+            # The calibrated transform doesn't account for table height properly,
+            # so we correct it based on known table height
+            table_height = GRASP_DETECTION_CONFIG.get(
+                'table_height_base_frame', 0.142)
             depth_offset = GRASP_DETECTION_CONFIG.get(
-                'grasp_depth_offset', 0.0)
-            if depth_offset != 0.0:
-                original_z = grasp_pose_base[2]
-                grasp_pose_base[2] += depth_offset
-                logger.info(f"📏 Applied depth offset: {depth_offset*1000:.1f}mm "
-                            f"(Z: {original_z:.3f} → {grasp_pose_base[2]:.3f})")
+                'grasp_depth_offset', 0.04)
+
+            original_z = grasp_pose_base[2]
+            # Correct Z: current Z is relative to some reference, add table height + offset
+            corrected_z = original_z + table_height + depth_offset
+            grasp_pose_base[2] = corrected_z
+
+            logger.info(f"📏 Z correction: raw={original_z:.3f}m + table={table_height:.3f}m + "
+                        f"offset={depth_offset:.3f}m = {corrected_z:.3f}m")
 
             # Orientation already determined by pipeline; no manual rotation
 
