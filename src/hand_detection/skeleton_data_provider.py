@@ -49,21 +49,22 @@ class StaticSkeletonData:
 class SkeletonDataProvider:
     """
     Unified interface for skeleton data sources.
-    
+
     Automatically switches between ZED receiver and static data based on configuration.
     """
 
     def __init__(self, zed_receiver: Optional[ZEDJointReceiver] = None):
         """
         Initialize skeleton data provider.
-        
+
         Args:
             zed_receiver: ZED joint receiver instance (can be None if using static data)
         """
         self.zed_receiver = zed_receiver
-        self.use_static_data = PATH_PLANNING_CONFIG.get('use_static_skeleton_data', False)
+        self.use_static_data = PATH_PLANNING_CONFIG.get(
+            'use_static_skeleton_data', False)
         self.static_data = PATH_PLANNING_CONFIG.get('static_skeleton_data', {})
-        
+
         if self.use_static_data:
             logger.info("Using static skeleton data from configuration")
             self._static_skeleton = self._create_static_skeleton()
@@ -74,7 +75,7 @@ class SkeletonDataProvider:
     def get_latest_frame(self) -> Optional[FrameData]:
         """
         Get the most recently available skeleton frame.
-        
+
         Returns:
             FrameData with skeleton information, or None if no data available
         """
@@ -82,7 +83,8 @@ class SkeletonDataProvider:
             return self._get_static_frame()
         else:
             if self.zed_receiver is None:
-                logger.error("ZED receiver not available and static data disabled")
+                logger.error(
+                    "ZED receiver not available and static data disabled")
                 return None
             return self.zed_receiver.get_latest_frame()
 
@@ -90,7 +92,7 @@ class SkeletonDataProvider:
         """Get static skeleton frame from configuration."""
         if self._static_skeleton is None:
             return None
-            
+
         # Create a FrameData object with the static skeleton
         return FrameData(
             frame=0,  # Static frame number
@@ -99,22 +101,35 @@ class SkeletonDataProvider:
         )
 
     def _create_static_skeleton(self) -> Optional[StaticSkeletonData]:
-        """Create static skeleton from configuration data."""
+        """Create static skeleton from configuration data with offset applied."""
         if not self.static_data:
             logger.error("No static skeleton data configured")
             return None
 
+        # Get offset configuration
+        offset = PATH_PLANNING_CONFIG.get(
+            'static_data_offset', {'x': 0.0, 'y': 0.0, 'z': 0.0})
+        offset_x = offset.get('x', 0.0)
+        offset_y = offset.get('y', 0.0)
+        offset_z = offset.get('z', 0.0)
+
         joints = []
         for joint_name, position in self.static_data.items():
             if len(position) != 3:
-                logger.warning(f"Invalid position data for {joint_name}: {position}")
+                logger.warning(
+                    f"Invalid position data for {joint_name}: {position}")
                 continue
-                
+
+            # Apply offset to position
+            adjusted_x = position[0] + offset_x
+            adjusted_y = position[1] + offset_y
+            adjusted_z = position[2] + offset_z
+
             joint = JointData(
                 joint_name=joint_name,
-                x=position[0],
-                y=position[1],
-                z=position[2]
+                x=adjusted_x,
+                y=adjusted_y,
+                z=adjusted_z
             )
             joints.append(joint)
 

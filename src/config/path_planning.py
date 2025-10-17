@@ -62,23 +62,31 @@ PATH_PLANNING_CONFIG = {
 
     # Data source configuration
     'use_static_skeleton_data': True,  # Use static data instead of ZED receiver
+
+    # Static data coordinate offset (applied to all static skeleton positions)
+    'static_data_offset': {
+        'x': 0.32,  # Subtract 23cm from X coordinate
+        'y': -0.4,   # Subtract 40cm from Y coordinate
+        'z': 0.0,    # No Z offset
+    },
+
     'static_skeleton_data': {
         # Static skeleton data for testing/development
         # Format: {joint_name: [x, y, z]} in meters
-        'RIGHT_WRIST': [0.5, 0.3, 0.8],
-        'RIGHT_HANDTIP': [0.55, 0.32, 0.75],
-        'LEFT_WRIST': [0.4, 0.3, 0.8],
-        'LEFT_HANDTIP': [0.45, 0.32, 0.75],
-        'RIGHT_SHOULDER': [0.3, 0.2, 1.2],
-        'RIGHT_ELBOW': [0.4, 0.25, 1.0],
-        'LEFT_SHOULDER': [0.2, 0.2, 1.2],
-        'LEFT_ELBOW': [0.3, 0.25, 1.0],
-        'NECK': [0.25, 0.15, 1.4],
-        'NOSE': [0.25, 0.15, 1.5],
-        'SPINE_2': [0.25, 0.1, 1.1],
-        'PELVIS': [0.25, 0.05, 0.9],
-        'RIGHT_CLAVICLE': [0.28, 0.18, 1.3],
-        'LEFT_CLAVICLE': [0.22, 0.18, 1.3],
+        'RIGHT_WRIST': [0.139, 0.614, 0.433],
+        'RIGHT_HANDTIP': [0.137, 0.508, 0.438],
+        'LEFT_WRIST': [-0.109, 0.997, 0.051],
+        'LEFT_HANDTIP': [-0.190, 0.931, 0.038],
+        'RIGHT_SHOULDER': [0.401, 0.967, 0.435],
+        'RIGHT_ELBOW': [0.180, 0.857, 0.440],
+        'LEFT_SHOULDER': [0.378, 0.980, 0.093],
+        'LEFT_ELBOW': [0.134, 1.007, 0.076],
+        'NECK': [0.435, 0.927, 0.263],
+        'NOSE': [0.565, 0.854, 0.230],
+        'SPINE_2': [0.154, 0.961, 0.260],
+        'PELVIS': [-0.034, 0.981, 0.264],
+        'RIGHT_CLAVICLE': [0.392, 0.977, 0.331],
+        'LEFT_CLAVICLE': [0.394, 0.983, 0.197],
     }
 }
 
