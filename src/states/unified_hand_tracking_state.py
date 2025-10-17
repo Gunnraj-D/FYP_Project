@@ -156,6 +156,9 @@ class UnifiedHandTrackingState(BaseState):
             hand_position=occlusion_data['hand_position']
         )
 
+        # Update GUI with occlusion status
+        self._update_gui_occlusion_status(occlusion_status)
+
         # Check for occlusion failure
         if occlusion_status.state == OcclusionStateEnum.OCCLUDED_FAILED:
             logger.warning(
@@ -546,6 +549,37 @@ class UnifiedHandTrackingState(BaseState):
         # Log occlusion statistics
         occlusion_stats = self.occlusion_detector.get_statistics()
         logger.info(f"Occlusion detection stats: {occlusion_stats}")
+
+    def _update_gui_occlusion_status(self, occlusion_status):
+        """Update the hand tracker GUI with current occlusion status."""
+        try:
+            # Map occlusion state to display text and color
+            state_mapping = {
+                OcclusionStateEnum.VISIBLE: ("TRACKING", (0, 255, 0)),  # Green
+                # Orange
+                OcclusionStateEnum.TEMPORARILY_OCCLUDED: ("OCCLUDED", (0, 165, 255)),
+                # Red
+                OcclusionStateEnum.OCCLUDED_FAILED: ("FAILED", (0, 0, 255)),
+                OcclusionStateEnum.NO_HAND: ("NO HAND", (0, 0, 255))  # Red
+            }
+
+            status_text, status_color = state_mapping.get(
+                occlusion_status.state, ("UNKNOWN", (128, 128, 128))
+            )
+
+            # Add reason to status text if available
+            if hasattr(occlusion_status, 'reason') and occlusion_status.reason:
+                status_text += f" ({occlusion_status.reason})"
+
+            # Update hand tracker display
+            self.hand_tracker.set_occlusion_status(
+                status_text=status_text,
+                status_color=status_color,
+                time_in_state=occlusion_status.time_in_state
+            )
+
+        except Exception as e:
+            logger.debug(f"Failed to update GUI occlusion status: {e}")
 
     def get_tracking_stats(self) -> dict:
         """Get statistics about the hand tracking process."""

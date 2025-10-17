@@ -301,6 +301,9 @@ class HandTracker:
                         color=(0, 0, 255), thickness=2, circle_radius=2)
                 )
 
+        # Draw confidence and occlusion information
+        self._draw_confidence_occlusion_info(frame)
+
         # Draw palm info
         if palm_pos and depth > 0:
             palm_x, palm_y, radius = palm_pos
@@ -331,6 +334,132 @@ class HandTracker:
                                 (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             except Exception as e:
                 logger.debug(f"Failed to display TCP coordinates: {e}")
+
+    def _draw_confidence_occlusion_info(self, frame):
+        """Draw confidence and occlusion information on the frame."""
+        h, w = frame.shape[:2]
+
+        # Get current confidence and landmark count
+        confidence = getattr(self, 'latest_confidence', 0.0)
+        landmark_count = getattr(self, 'latest_landmark_count', 0)
+
+        # Position for confidence/occlusion info (top-right corner)
+        info_x = w - 300
+        info_y = 30
+        line_height = 25
+
+        # Background rectangle for better readability
+        cv2.rectangle(frame, (info_x - 10, info_y - 20),
+                      (w - 10, info_y + 120), (0, 0, 0), -1)
+        cv2.rectangle(frame, (info_x - 10, info_y - 20),
+                      (w - 10, info_y + 120), (255, 255, 255), 2)
+
+        # Confidence score
+        confidence_color = self._get_confidence_color(confidence)
+        cv2.putText(frame, f"Confidence: {confidence:.3f}",
+                    (info_x, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, confidence_color, 2)
+
+        # Landmark count
+        landmark_color = self._get_landmark_color(landmark_count)
+        cv2.putText(frame, f"Landmarks: {landmark_count}/21",
+                    (info_x, info_y + line_height), cv2.FONT_HERSHEY_SIMPLEX, 0.6, landmark_color, 2)
+
+        # Quality indicator
+        quality = self._calculate_quality_score(confidence, landmark_count)
+        quality_color = self._get_quality_color(quality)
+        cv2.putText(frame, f"Quality: {quality:.1f}%",
+                    (info_x, info_y + 2*line_height), cv2.FONT_HERSHEY_SIMPLEX, 0.6, quality_color, 2)
+
+        # Status indicator (use external status if available, otherwise calculate)
+        if hasattr(self, 'occlusion_status_text'):
+            status_text = self.occlusion_status_text
+            status_color = getattr(self, 'occlusion_status_color', (0, 255, 0))
+        else:
+            status_text, status_color = self._get_status_info(
+                confidence, landmark_count)
+        cv2.putText(frame, f"Status: {status_text}",
+                    (info_x, info_y + 3*line_height), cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+
+        # Time in state (if available)
+        if hasattr(self, 'occlusion_time_in_state'):
+            time_text = f"Time: {self.occlusion_time_in_state:.1f}s"
+            cv2.putText(frame, time_text,
+                        (info_x, info_y + 4*line_height), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+        # Progress bar for confidence
+        self._draw_confidence_bar(
+            frame, info_x, info_y + 5*line_height, confidence)
+
+    def _get_confidence_color(self, confidence):
+        """Get color for confidence display based on value."""
+        if confidence >= 0.7:
+            return (0, 255, 0)  # Green - good
+        elif confidence >= 0.4:
+            return (0, 255, 255)  # Yellow - warning
+        else:
+            return (0, 0, 255)  # Red - poor
+
+    def _get_landmark_color(self, landmark_count):
+        """Get color for landmark count display."""
+        if landmark_count >= 18:
+            return (0, 255, 0)  # Green - good
+        elif landmark_count >= 15:
+            return (0, 255, 255)  # Yellow - warning
+        else:
+            return (0, 0, 255)  # Red - poor
+
+    def _calculate_quality_score(self, confidence, landmark_count):
+        """Calculate overall quality score (0-100%)."""
+        # Weight confidence more heavily (70%) than landmark count (30%)
+        confidence_score = min(confidence * 100, 100)
+        landmark_score = (landmark_count / 21) * 100
+        return (confidence_score * 0.7) + (landmark_score * 0.3)
+
+    def _get_quality_color(self, quality):
+        """Get color for quality display."""
+        if quality >= 80:
+            return (0, 255, 0)  # Green - excellent
+        elif quality >= 60:
+            return (0, 255, 255)  # Yellow - good
+        elif quality >= 40:
+            return (0, 165, 255)  # Orange - fair
+        else:
+            return (0, 0, 255)  # Red - poor
+
+    def _get_status_info(self, confidence, landmark_count):
+        """Get status text and color based on current values."""
+        # Check against typical thresholds
+        min_confidence = 0.3
+        min_landmarks = 15
+
+        if confidence >= min_confidence and landmark_count >= min_landmarks:
+            return "TRACKING", (0, 255, 0)  # Green
+        elif confidence >= min_confidence * 0.5 and landmark_count >= min_landmarks * 0.5:
+            return "DEGRADED", (0, 255, 255)  # Yellow
+        elif confidence > 0 or landmark_count > 0:
+            return "OCCLUDED", (0, 165, 255)  # Orange
+        else:
+            return "NO HAND", (0, 0, 255)  # Red
+
+    def _draw_confidence_bar(self, frame, x, y, confidence):
+        """Draw a confidence progress bar."""
+        bar_width = 200
+        bar_height = 15
+
+        # Background bar
+        cv2.rectangle(frame, (x, y), (x + bar_width,
+                      y + bar_height), (50, 50, 50), -1)
+
+        # Confidence bar
+        bar_fill = int(bar_width * confidence)
+        if bar_fill > 0:
+            color = self._get_confidence_color(confidence)
+            cv2.rectangle(frame, (x, y), (x + bar_fill,
+                          y + bar_height), color, -1)
+
+        # Border
+        cv2.rectangle(frame, (x, y), (x + bar_width, y +
+                      bar_height), (255, 255, 255), 1)
 
     def start(self):
         """Start hand tracking in background thread."""
@@ -564,6 +693,19 @@ class HandTracker:
             'landmark_count': self.latest_landmark_count,
             'hand_position': hand_position
         }
+
+    def set_occlusion_status(self, status_text, status_color, time_in_state=0.0):
+        """
+        Set occlusion status information for display.
+
+        Args:
+            status_text: Status text to display (e.g., "TRACKING", "OCCLUDED")
+            status_color: BGR color tuple for status text
+            time_in_state: Time spent in current state (seconds)
+        """
+        self.occlusion_status_text = status_text
+        self.occlusion_status_color = status_color
+        self.occlusion_time_in_state = time_in_state
 
     def _cleanup(self):
         """Clean up resources."""
