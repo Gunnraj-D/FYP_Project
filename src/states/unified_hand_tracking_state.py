@@ -87,7 +87,10 @@ class UnifiedHandTrackingState(BaseState):
         self.is_moving_to_target = False
         self.waiting_for_move_completion = False
         self.move_start_time = 0.0
-        self.move_completion_wait_time = 1.0  # Wait 1 second for move to complete
+        self.move_completion_wait_time = 0.5  # Wait 0.5 seconds for move to complete
+        self.settling_wait_time = 0.3  # Additional settling time after move completes
+        self.move_target_position = None  # Store the target position for completion check
+        self._in_settling_period = False  # Flag to track settling period
 
     def enter(self):
         """Initialize hand tracker and reset state variables."""
@@ -131,6 +134,12 @@ class UnifiedHandTrackingState(BaseState):
             self.occlusion_detector.reset()
             self.occlusion_failed = False
             self.timed_out = False
+
+            # Reset move tracking flags
+            self.is_moving_to_target = False
+            self.waiting_for_move_completion = False
+            self._in_settling_period = False
+            self.move_target_position = None
 
             print("✅ UnifiedHandTrackingState initialized successfully")
             logger.info("✅ UnifiedHandTrackingState initialized successfully")
@@ -201,12 +210,22 @@ class UnifiedHandTrackingState(BaseState):
 
         # Single-move logic
         if self.waiting_for_move_completion:
-            # Wait for move to complete
-            if current_time - self.move_start_time >= self.move_completion_wait_time:
-                logger.info("Move completion wait finished, checking position")
-                self.waiting_for_move_completion = False
-                self.is_moving_to_target = False
-            return
+            # Check if we're in settling period (after move completed)
+            if hasattr(self, '_in_settling_period') and self._in_settling_period:
+                # Check if settling period is complete
+                if current_time - self.move_start_time >= self.settling_wait_time:
+                    logger.info(
+                        "Settling period complete, ready for next move")
+                    self.waiting_for_move_completion = False
+                    self._in_settling_period = False
+                return
+            else:
+                # Check if move has actually completed by checking position
+                if self._is_move_complete(current_time):
+                    logger.info("Move completed, starting settling period")
+                    self._in_settling_period = True
+                    self.move_start_time = current_time
+                return
 
         # If not in deadzone and not currently moving, make a move
         if not self.is_hand_stable and not self.is_moving_to_target:
@@ -239,9 +258,9 @@ class UnifiedHandTrackingState(BaseState):
         hand_pos_tcp = np.array(hand_position, dtype=float)
         hand_pos_tcp[2] -= 0.138  # Z offset
 
-        # Target in TCP coordinates
+        # Target in TCP coordinates (15cm above hand to match approach state)
         target_pos_tcp = np.array(
-            [0.0, 0.0, DISTANCE_TO_REMAIN_M], dtype=float)
+            [0.0, 0.0, 0.15], dtype=float)  # 15cm above hand
 
         distance_from_target = float(
             np.linalg.norm(hand_pos_tcp - target_pos_tcp))
@@ -331,9 +350,9 @@ class UnifiedHandTrackingState(BaseState):
         hand_pos_tcp = np.array(hand_position, dtype=float)
         hand_pos_tcp[2] -= 0.138  # -138mm Z offset
 
-        # Target position in TCP frame (center of deadzone = [0, 0, DISTANCE_TO_REMAIN_M])
+        # Target position in TCP frame (center of deadzone = 15cm above hand)
         target_pos_tcp = np.array(
-            [0.0, 0.0, DISTANCE_TO_REMAIN_M], dtype=float)
+            [0.0, 0.0, 0.15], dtype=float)  # 15cm above hand
 
         # Compute offset in TCP frame
         tcp_offset_tcp = target_pos_tcp - hand_pos_tcp
@@ -381,9 +400,51 @@ class UnifiedHandTrackingState(BaseState):
             self.is_moving_to_target = True
             self.waiting_for_move_completion = True
             self.move_start_time = current_time
+            # Store target for completion check
+            self.move_target_position = desired_target_base
+            self._in_settling_period = False  # Reset settling flag
         else:
             logger.warning("❌ IK solve failed - no solutions found")
             self.is_moving_to_target = False
+
+    def _is_move_complete(self, current_time: float) -> bool:
+        """
+        Check if the current move has completed by comparing current position to target.
+        Also includes a minimum time check to avoid false completions.
+        """
+        # Minimum time must have passed
+        if current_time - self.move_start_time < self.move_completion_wait_time:
+            return False
+
+        # Check if we have a target position
+        if self.move_target_position is None:
+            return True  # No target means we can consider it "complete"
+
+        # Get current robot position
+        current_joints = self.context.telemetry.get_current_joints()
+        if current_joints is None:
+            return False
+
+        _, current_tcp_pose = self.context.ik.tcp_from_joints(current_joints)
+        current_pos = np.array(current_tcp_pose[:3])
+
+        # Check if we're close enough to the target
+        distance = np.linalg.norm(current_pos - self.move_target_position)
+        position_tolerance = 0.01  # 1cm tolerance
+
+        if distance <= position_tolerance:
+            logger.info(
+                f"Move completed: distance to target = {distance*1000:.1f}mm")
+            return True
+
+        # If we've waited too long, consider it complete anyway
+        max_wait_time = 3.0  # 3 seconds max wait
+        if current_time - self.move_start_time >= max_wait_time:
+            logger.warning(
+                f"Move timeout: distance to target = {distance*1000:.1f}mm after {max_wait_time}s")
+            return True
+
+        return False
 
     def __estimate_robot_velocity(self, current_pos: np.ndarray, current_time: float, last_pos: Optional[np.ndarray], last_time: Optional[float]) -> np.ndarray:
         """
