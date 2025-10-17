@@ -3,6 +3,11 @@ Unified Hand Tracking State - Active hand tracking with robot movement control.
 This state combines hand tracking with robot movement control using the command bus.
 The robot moves toward the hand centroid with a specified height offset, and calculates
 placement pose when the hand remains stable for the required duration.
+
+Features:
+- Intelligent hand occlusion detection using MediaPipe confidence scores
+- 2-second grace period for temporary occlusions
+- Automatic failure handling for persistent occlusion
 """
 import logging
 import time
@@ -14,10 +19,16 @@ from states.base_state import BaseState
 from states.context import StateContext
 from control.command_bus import SetJoints
 from hand_detection.hand_detection_module import HandTracker
+from hand_detection.hand_occlusion_detector import (
+    HandOcclusionDetector,
+    OcclusionConfig,
+    OcclusionState as OcclusionStateEnum
+)
 from camera_management.camera_transform_module import transform_camera_to_base
 from config import (
     HAND_STABILITY_TIME_THRESHOLD,
     HAND_STABILITY_THRESHOLD,
+    HAND_OCCLUSION_CONFIG,
     DISTANCE_TO_REMAIN_M,
     CONTROL_ESTIMATED_LATENCY_S,
     MAX_POSITION_CHANGE_PER_CYCLE,
@@ -65,6 +76,11 @@ class UnifiedHandTrackingState(BaseState):
         self.last_tcp_time: Optional[float] = None
         self.last_estimated_tcp_velocity: np.ndarray = np.zeros(3)
 
+        # Occlusion detection
+        occlusion_config = OcclusionConfig(**HAND_OCCLUSION_CONFIG)
+        self.occlusion_detector = HandOcclusionDetector(occlusion_config)
+        self.occlusion_failed = False
+
     def enter(self):
         """Initialize hand tracker and reset state variables."""
         print("=" * 80)
@@ -103,6 +119,10 @@ class UnifiedHandTrackingState(BaseState):
             self.last_stability_check = 0.0
             self.last_movement_time = 0.0
 
+            # Reset occlusion detector
+            self.occlusion_detector.reset()
+            self.occlusion_failed = False
+
             print("✅ UnifiedHandTrackingState initialized successfully")
             logger.info("✅ UnifiedHandTrackingState initialized successfully")
 
@@ -119,6 +139,7 @@ class UnifiedHandTrackingState(BaseState):
         Main 10Hz control loop entry.
         - Throttles to 10Hz using last_stability_check timestamp (keeps original behavior).
         - Updates hand tracking, computes predictive + damped command and sends IK commands.
+        - Monitors hand occlusion and fails gracefully if hand remains occluded.
         """
         current_time = time.time()
 
@@ -126,6 +147,26 @@ class UnifiedHandTrackingState(BaseState):
         if current_time - self.last_stability_check < 0.1:
             return
         self.last_stability_check = current_time
+
+        # Update occlusion detection
+        occlusion_data = self.hand_tracker.get_occlusion_data()
+        occlusion_status = self.occlusion_detector.update(
+            confidence=occlusion_data['confidence'],
+            landmark_count=occlusion_data['landmark_count'],
+            hand_position=occlusion_data['hand_position']
+        )
+
+        # Check for occlusion failure
+        if occlusion_status.state == OcclusionStateEnum.OCCLUDED_FAILED:
+            logger.warning(
+                f"Hand occlusion detected: {occlusion_status.reason}")
+            self.occlusion_failed = True
+            return
+
+        # Log temporary occlusion (informational)
+        if occlusion_status.state == OcclusionStateEnum.TEMPORARILY_OCCLUDED:
+            logger.info(
+                f"Hand temporarily occluded: {occlusion_status.reason}")
 
         hand_position = self.context.telemetry.get_camera_vector()
 
@@ -439,8 +480,16 @@ class UnifiedHandTrackingState(BaseState):
             logger.error(f"Error calculating placement pose: {e}")
 
     def is_complete(self) -> bool:
-        """Check if hand tracking is complete (hand stable for required duration)."""
+        """
+        Check if hand tracking is complete (hand stable for required duration).
+        Also returns True if occlusion caused failure.
+        """
         current_time = time.time()
+
+        # Check for occlusion failure
+        if self.occlusion_failed:
+            logger.warning("Hand tracking failed due to occlusion")
+            return True
 
         # Check if hand has been stable for the required duration
         if self.is_hand_stable:
@@ -458,6 +507,13 @@ class UnifiedHandTrackingState(BaseState):
             return True
 
         return False
+
+    def did_fail(self) -> bool:
+        """
+        Check if the hand tracking state failed due to occlusion.
+        This can be used by the sequencer to determine if fallback is needed.
+        """
+        return self.occlusion_failed
 
     def exit(self):
         """Clean up hand tracker and log final results."""
@@ -486,6 +542,10 @@ class UnifiedHandTrackingState(BaseState):
         self.last_hand_position = None
         self.last_stability_check = 0.0
         self.last_movement_time = 0.0
+
+        # Log occlusion statistics
+        occlusion_stats = self.occlusion_detector.get_statistics()
+        logger.info(f"Occlusion detection stats: {occlusion_stats}")
 
     def get_tracking_stats(self) -> dict:
         """Get statistics about the hand tracking process."""

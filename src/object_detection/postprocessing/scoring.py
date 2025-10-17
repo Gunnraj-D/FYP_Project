@@ -22,11 +22,11 @@ def get_default_weights() -> Dict[str, float]:
     """Get default scoring weights."""
     return {
         'q': 1.0,   # Quality (baseline importance)
-        'o': 1.2,   # Overlap (emphasized for anti-tip)
+        'o': 1.5,   # Overlap (STRONG emphasis for anti-tip)
         'b': 0.5,   # Border (less critical if other factors good)
         'w': 0.7,   # Width preference (optimal range)
-        't': 0.8,   # Temporal consistency (reduces jitter)
-        'c': 1.0    # Center distance (favor grasps near mask centroid)
+        't': 0.0,   # Temporal consistency (DISABLED for now)
+        'c': 2.0    # Center distance (STRONG bias toward center grasps)
     }
 
 

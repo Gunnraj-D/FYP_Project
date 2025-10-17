@@ -10,4 +10,5 @@ class States(Enum):
     GRIPPER_CONTROL = auto()
     GRASPING = auto()  # New state for GGCNN2-based grasping
     GENERATE_PICKUP = auto()  # New state for generating grasp poses
+    HANDOFF_FALLBACK = auto()  # Fallback state when hand occlusion occurs
     ERROR = auto()

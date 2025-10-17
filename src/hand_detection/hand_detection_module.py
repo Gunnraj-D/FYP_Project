@@ -147,6 +147,10 @@ class HandTracker:
         self.latest_result = None
         self.latest_timestamp = 0
 
+        # Occlusion detection data (exposed for external monitoring)
+        self.latest_confidence = None
+        self.latest_landmark_count = None
+
         # Visualization
         self.mp_drawing = solutions.drawing_utils
         self.mp_hands = solutions.hands
@@ -185,6 +189,26 @@ class HandTracker:
         """Callback for hand detection results."""
         self.latest_result = result
         self.latest_timestamp = timestamp_ms
+
+        # Update occlusion detection data
+        if result and result.hand_landmarks and len(result.hand_landmarks) > 0:
+            # Count visible landmarks (all 21 are always present in MediaPipe)
+            self.latest_landmark_count = len(result.hand_landmarks[0])
+
+            # Extract hand detection confidence from handedness scores
+            # MediaPipe provides handedness scores (confidence of left/right classification)
+            # which serves as a good proxy for overall hand detection confidence
+            if hasattr(result, 'handedness') and result.handedness and len(result.handedness) > 0:
+                # Use handedness score as confidence (0-1 range)
+                # First hand, first category
+                handedness_category = result.handedness[0][0]
+                self.latest_confidence = handedness_category.score
+            else:
+                # Fallback: if landmarks detected but no handedness, assume moderate confidence
+                self.latest_confidence = 0.6
+        else:
+            self.latest_confidence = 0.0
+            self.latest_landmark_count = 0
 
     def _calculate_palm_centroid(self, landmarks):
         """Calculate palm centroid and radius."""
@@ -481,6 +505,10 @@ class HandTracker:
                         # No prior data, send zeros
                         self.telemetry.update_camera_vector([0.0, 0.0, 0.0])
 
+                    # Update occlusion data for no hand case
+                    self.latest_confidence = 0.0
+                    self.latest_landmark_count = 0
+
                 # Create display frame
                 display_frame = cv2.flip(color_frame, 1)
 
@@ -519,6 +547,23 @@ class HandTracker:
 
         # Clean up OpenCV windows in the same thread that created them
         cv2.destroyAllWindows()
+
+    def get_occlusion_data(self):
+        """
+        Get current hand detection confidence and landmark count for occlusion detection.
+
+        Returns:
+            dict with keys:
+                - confidence: float (0-1) or None
+                - landmark_count: int (0-21) or None
+                - hand_position: list [x, y, z] from telemetry
+        """
+        hand_position = self.telemetry.get_camera_vector()
+        return {
+            'confidence': self.latest_confidence,
+            'landmark_count': self.latest_landmark_count,
+            'hand_position': hand_position
+        }
 
     def _cleanup(self):
         """Clean up resources."""

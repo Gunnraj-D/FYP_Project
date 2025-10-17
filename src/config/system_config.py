@@ -45,7 +45,28 @@ HAND_STABILITY_THRESHOLD = 0.02  # How stable the hand should be (meters)
 # How long hand needs to remain stable (seconds)
 HAND_STABILITY_TIME_THRESHOLD = 2.0
 
-# Hand occlusion detection parameters
+# Hand occlusion detection parameters (MediaPipe-based)
+HAND_OCCLUSION_CONFIG = {
+    # MediaPipe confidence threshold (below this = occluded)
+    'min_confidence': 0.3,
+
+    # Minimum number of visible landmarks (out of 21 total MediaPipe landmarks)
+    'min_visible_landmarks': 15,
+
+    # Grace period: wait this long for hand to become unoccluded (seconds)
+    # If hand becomes visible within this time, continue normally
+    'grace_period_s': 2.0,
+
+    # Number of consecutive occluded frames to confirm occlusion
+    # Prevents false positives from single bad frames
+    'consecutive_frames_threshold': 3,
+
+    # Timeout: if no hand appears within this time, fail (seconds)
+    # This handles the case where operator never presents their hand
+    'no_hand_timeout_s': 2.0,
+}
+
+# Legacy parameters (kept for backward compatibility, consider deprecated)
 HAND_OCCLUSION_THRESHOLD = 0.5  # Threshold for detecting hand occlusion
 # Number of consecutive frames for occlusion detection
 HAND_OCCLUSION_FRAMES_THRESHOLD = 3

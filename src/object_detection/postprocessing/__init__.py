@@ -331,11 +331,12 @@ class GraspPostprocessor:
         # Boost quality inside object mask if configured
         if GRASP_DETECTION_CONFIG.get('boost_masked_quality', False):
             boost_factor = float(GRASP_DETECTION_CONFIG.get(
-                'quality_boost_factor', 1.3))
+                'quality_boost_factor', 1.2))  # REDUCED: Less aggressive boosting
             q_boosted = q_np.copy()
-            needs_boost = (q_np < 0.5) & object_mask
+            # REDUCED: Only boost very low quality
+            needs_boost = (q_np < 0.4) & object_mask
             q_boosted[needs_boost] = np.clip(
-                q_boosted[needs_boost] * boost_factor, 0.0, 0.95)
+                q_boosted[needs_boost] * boost_factor, 0.0, 0.90)  # REDUCED: Cap at 0.90
             q_np = q_boosted
 
         # NMS: Select local maxima (hybrid if available)
@@ -557,8 +558,8 @@ class GraspPostprocessor:
 
         # Overlap constraint (stricter if far from center)
         min_overlap_required = self.min_overlap
-        if center_dist < 0.5:
-            min_overlap_required *= 1.3
+        if center_dist < 0.5:  # Edge grasp
+            min_overlap_required *= 1.5  # INCREASED: Require 50% more overlap at edges
         if overlap < min_overlap_required:
             return False, f"Low overlap ({overlap:.2f} < {min_overlap_required:.2f})"
 
@@ -567,8 +568,8 @@ class GraspPostprocessor:
         if border_dist < border_thr:
             return False, f"Too close to border ({border_dist:.2f})"
 
-        # Prefer center grasps
-        if center_dist < 0.3:
+        # STRICT center preference - reject edge grasps
+        if center_dist < 0.4:  # INCREASED: More strict about center preference
             return False, f"Too far from center ({center_dist:.2f})"
 
         # All constraints passed

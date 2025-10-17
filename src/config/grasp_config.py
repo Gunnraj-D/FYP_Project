@@ -104,7 +104,8 @@ GRASP_DETECTION_CONFIG = {
     # ========================================================================
     # TEMPORAL FILTERING
     # ========================================================================
-    'temporal_filter_enabled': True,          # Enable temporal filtering
+    # DISABLED: Fix edge bias first, then re-enable
+    'temporal_filter_enabled': False,
     'temporal_window_size': 5,                # Number of frames to average
     'temporal_filter_type': 'circular_mean',  # 'circular_mean', 'median', or 'ema'
     'temporal_ema_alpha': 0.3,                # EMA smoothing factor
@@ -132,7 +133,7 @@ GRASP_DETECTION_CONFIG = {
     # Minimum overlap between grasp rectangle and detected object
     # Prevents tip grasps by requiring contact with object body
     # Guidelines: Flat (0.3-0.4), Cylindrical (0.25-0.3), Small (0.2-0.25)
-    'min_overlap': 0.55,
+    'min_overlap': 0.60,  # INCREASED: Force center grasps, prevent edge bias
 
     # FOREGROUND MASK SEGMENTATION 🔍
     # Parameters for depth-based object/background segmentation
@@ -158,7 +159,7 @@ GRASP_DETECTION_CONFIG = {
     # Rejects grasps too close to image edges
     # Range: [0,1], where 0.2 = within 20% of edge
     'border_threshold': 0.15,
-    'boost_masked_quality': True,
+    'boost_masked_quality': False,  # DISABLED: Prevents everything becoming 1.0
     'denoise_quality': True,
     'use_geometric_fallback': True,
     # Depth sampling method for ROI: 'median' (default), 'min', or 'p_low' (percentile)
@@ -168,14 +169,15 @@ GRASP_DETECTION_CONFIG = {
     'edge_margin_px': 6,
 
     # MULTI-FACTOR SCORING WEIGHTS ⚖️
-    # Formula: score = (Q^w_q) × (O^w_o) × (B^w_b) × (W^w_w) × (T^w_t)
+    # Formula: score = (Q^w_q) × (O^w_o) × (B^w_b) × (W^w_w) × (T^w_t) × (C^w_c)
     # Higher weight = more important factor
     'scoring_weights': {
         'q': 1.0,   # Quality (baseline importance)
-        'o': 1.2,   # Overlap (emphasized for anti-tip)
+        'o': 1.5,   # Overlap (STRONG emphasis for anti-tip)
         'b': 0.5,   # Border (less critical if other factors good)
         'w': 0.7,   # Width preference (optimal range)
-        't': 0.8    # Temporal consistency (reduces jitter)
+        't': 0.0,   # Temporal consistency (DISABLED for now)
+        'c': 2.0    # Center distance (STRONG bias toward center grasps)
     },
 }
 
