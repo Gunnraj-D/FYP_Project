@@ -125,10 +125,10 @@ LOG_DEPTH_QUALITY = True
 CONTROL_ESTIMATED_LATENCY_S = 0.30  # Increased to reduce overshoot
 
 # Per-cycle safety clamps
-# meters (max 3cm commanded change per 10Hz cycle) - reduced for smoother motion
-MAX_POSITION_CHANGE_PER_CYCLE = 0.03
+# meters (max 1cm commanded change per 10Hz cycle) - reduced to minimize jitter
+MAX_POSITION_CHANGE_PER_CYCLE = 0.010
 # meters (optional extra clamp per axis)
-MAX_AXIAL_CHANGE_PER_CYCLE = 0.025
+MAX_AXIAL_CHANGE_PER_CYCLE = 0.008
 
 # Staged approach distances
 # meters; >0.15 -> full scale (start slowing earlier)
@@ -138,7 +138,7 @@ STAGED_FINE_DISTANCE = 0.05
 
 # Velocity damping (simple damping to reduce command at high robot velocities)
 # unitless damping coefficient; higher -> more damping
-VELOCITY_DAMPING_K = 2.0  # Increased for more aggressive damping
+VELOCITY_DAMPING_K = 4.0  # Increased to 4.0 for smoother motion and less jitter
 
 # Dead zone hysteresis & stability thresholds
 # entry threshold (30mm) - precise for hand placement

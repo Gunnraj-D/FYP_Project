@@ -81,6 +81,12 @@ class UnifiedHandTrackingState(BaseState):
         self.occlusion_detector = HandOcclusionDetector(occlusion_config)
         self.occlusion_failed = False
 
+        # Single-move strategy: move once to deadzone center, wait, then check if reposition needed
+        self.is_moving_to_target = False
+        self.waiting_for_move_completion = False
+        self.move_start_time = 0.0
+        self.move_completion_wait_time = 1.0  # Wait 1 second for move to complete
+
     def enter(self):
         """Initialize hand tracker and reset state variables."""
         print("=" * 80)
@@ -136,10 +142,11 @@ class UnifiedHandTrackingState(BaseState):
 
     def execute(self):
         """
-        Main 10Hz control loop entry.
-        - Throttles to 10Hz using last_stability_check timestamp (keeps original behavior).
-        - Updates hand tracking, computes predictive + damped command and sends IK commands.
-        - Monitors hand occlusion and fails gracefully if hand remains occluded.
+        Single-move strategy:
+        1. Check if hand is detected
+        2. If outside deadzone and not currently moving, make ONE move to deadzone center
+        3. Wait for move to complete
+        4. Check if still in deadzone, if not, repeat step 2
         """
         current_time = time.time()
 
@@ -175,27 +182,39 @@ class UnifiedHandTrackingState(BaseState):
 
         # Guard: invalid detection
         if hand_position is None or np.array_equal(hand_position, [0.0, 0.0, 0.0]):
-            # No hand detected - reset stability flags but keep velocity history (do not zero it)
+            # No hand detected - reset stability flags
             self.is_hand_stable = False
             self.hand_stable_start_time = 0.0
+            self.is_moving_to_target = False
+            self.waiting_for_move_completion = False
             return
 
-        # Update hand tracking dead-zone logic (hysteresis + velocity requirement)
+        # Update hand tracking and check deadzone status
         try:
             self._update_hand_tracking(hand_position, current_time)
         except Exception as e:
             logger.exception("Error in _update_hand_tracking: %s", e)
-            # Safe fallback: do not move if tracking update fails
             return
 
-        # Calculate and send motion command (contains prediction + damping)
-        try:
-            self._move_robot_toward_hand(hand_position, current_time)
-        except Exception as e:
-            logger.exception("Error in _move_robot_toward_hand: %s", e)
+        # Single-move logic
+        if self.waiting_for_move_completion:
+            # Wait for move to complete
+            if current_time - self.move_start_time >= self.move_completion_wait_time:
+                logger.info("Move completion wait finished, checking position")
+                self.waiting_for_move_completion = False
+                self.is_moving_to_target = False
             return
 
-        # Existing placement calc (keeps original behavior)
+        # If not in deadzone and not currently moving, make a move
+        if not self.is_hand_stable and not self.is_moving_to_target:
+            try:
+                self._make_single_move_to_deadzone(hand_position, current_time)
+            except Exception as e:
+                logger.exception(
+                    "Error in _make_single_move_to_deadzone: %s", e)
+                return
+
+        # Always update placement pose calculation
         try:
             self._calculate_placement_pose(hand_position)
         except Exception:
@@ -225,8 +244,25 @@ class UnifiedHandTrackingState(BaseState):
             np.linalg.norm(hand_pos_tcp - target_pos_tcp))
 
         # Estimate robot velocity (base frame) for velocity-based stability requirement
-        # This uses the stored last_tcp_pose/time values maintained by _move_robot_toward_hand.
-        robot_vel = getattr(self, "last_estimated_tcp_velocity", np.zeros(3))
+        current_joints = self.context.telemetry.get_current_joints()
+        if current_joints is not None:
+            current_tcp_matrix, current_tcp_pose = self.context.ik.tcp_from_joints(
+                current_joints)
+            current_pos_base = np.array(current_tcp_pose[:3], dtype=float)
+
+            last_pose = getattr(self, "last_tcp_pose", None)
+            last_time = getattr(self, "last_tcp_time", None)
+            robot_vel = self.__estimate_robot_velocity(
+                current_pos_base, current_time, last_pose, last_time)
+
+            # Update history
+            self.last_tcp_pose = current_pos_base.copy()
+            self.last_tcp_time = current_time
+            self.last_estimated_tcp_velocity = robot_vel
+        else:
+            robot_vel = getattr(
+                self, "last_estimated_tcp_velocity", np.zeros(3))
+
         robot_speed = float(np.linalg.norm(robot_vel))
 
         # Hysteresis thresholds from config
@@ -272,127 +308,48 @@ class UnifiedHandTrackingState(BaseState):
             logger.error(f"Error transforming camera to TCP: {e}")
             return np.array([0.0, 0.0, 0.0])
 
-    def _move_robot_toward_hand(self, hand_position, current_time: float):
+    def _make_single_move_to_deadzone(self, hand_position, current_time: float):
         """
-        Predictive + damped motion command.
-        Steps:
-        1. read current joints and compute current TCP pose (base frame)
-        2. estimate robot velocity (base frame) from last stored pose
-        3. predict where robot will be after estimated latency
-        4. compute offset from predicted robot pose to desired target (base frame)
-        5. apply staged scaling + velocity damping and clamp per-cycle movement
-        6. solve IK and send SetJoints command if safe
+        Make a single move directly to the center of the deadzone.
+        After sending command, wait for completion before making another move.
         """
-        # If already stable do not command motion (but still update internal history)
-        if self.is_hand_stable:
-            # Optionally could send a hold command; for now, do nothing to avoid jitter.
-            # Still update stored pose/velocity history below.
-            pass
-
         # Get current robot joints
         current_joints = self.context.telemetry.get_current_joints()
         if current_joints is None:
-            logger.warning("_move_robot_toward_hand: current_joints is None")
+            logger.warning(
+                "_make_single_move_to_deadzone: current_joints is None")
             return
 
         current_tcp_matrix, current_tcp_pose = self.context.ik.tcp_from_joints(
             current_joints)
         current_pos_base = np.array(current_tcp_pose[:3], dtype=float)
 
-        # --- Estimate velocity based on last pose/time ---
-        last_pose = getattr(self, "last_tcp_pose", None)
-        last_time = getattr(self, "last_tcp_time", None)
-        estimated_velocity = self.__estimate_robot_velocity(
-            current_pos_base, current_time, last_pose, last_time)
-        # store for use by _update_hand_tracking
-        self.last_estimated_tcp_velocity = estimated_velocity
-
-        # store history for next iteration
-        self.last_tcp_pose = current_pos_base.copy()
-        self.last_tcp_time = current_time
-
         # Apply Z calibration offset to hand (in TCP frame)
         hand_pos_tcp = np.array(hand_position, dtype=float)
         hand_pos_tcp[2] -= 0.138  # -138mm Z offset
 
-        # Target position in TCP frame (where we want the TCP relative to the hand)
+        # Target position in TCP frame (center of deadzone = [0, 0, DISTANCE_TO_REMAIN_M])
         target_pos_tcp = np.array(
             [0.0, 0.0, DISTANCE_TO_REMAIN_M], dtype=float)
 
-        # Compute desired tcp_offset in TCP frame (note original code inverted axes)
+        # Compute offset in TCP frame
         tcp_offset_tcp = target_pos_tcp - hand_pos_tcp
-        # invert all axes (preserves original behaviour)
+        # Invert all axes (preserves original behavior)
         tcp_offset_tcp = -tcp_offset_tcp
 
         # Transform tcp_offset to base frame (vector)
         tcp_rotation = np.array(current_tcp_matrix[:3, :3], dtype=float)
         tcp_offset_in_base = tcp_rotation @ tcp_offset_tcp
-        # where we want the TCP to be (base frame)
+
+        # Calculate desired target position in base frame
         desired_target_base = current_pos_base + tcp_offset_in_base
 
-        # --- Latency compensation: predict where robot will be when this command takes effect ---
-        latency = CONTROL_ESTIMATED_LATENCY_S
-        predicted_robot_pos = current_pos_base + estimated_velocity * latency
+        distance = float(np.linalg.norm(tcp_offset_in_base))
+        logger.info(
+            f"🎯 Making single move to deadzone center (distance: {distance*1000:.1f}mm)")
 
-        # Compute offset from predicted robot position to desired target
-        offset = desired_target_base - predicted_robot_pos
-        distance = float(np.linalg.norm(offset))
-
-        # --- Staged scaling: distance-based scaling for safe deceleration near target ---
-        if distance >= STAGED_FULL_SPEED_DISTANCE:
-            distance_scale = 1.0
-        elif distance <= STAGED_FINE_DISTANCE:
-            # Fine approach: aggressive downscale to avoid overshoot (we use 30% of full)
-            # scale proportional to distance to give smoother approach
-            distance_scale = 0.3 * \
-                (distance / max(STAGED_FINE_DISTANCE, 1e-6))
-        else:
-            # Transition region: linear ramp between full and fine
-            # map [STAGED_FINE_DISTANCE, STAGED_FULL_SPEED_DISTANCE] -> [0.3, 1.0]
-            a = STAGED_FINE_DISTANCE
-            b = STAGED_FULL_SPEED_DISTANCE
-            alpha = (distance - a) / max((b - a), 1e-6)
-            distance_scale = 0.3 + 0.7 * alpha
-
-        # --- Velocity-based damping: reduce commanded offset if robot already moving toward/away quickly ---
-        # Project robot velocity onto offset direction to get approach speed (signed)
-        offset_dir = offset / (distance + 1e-9)
-        # positive = moving toward the target
-        approach_speed = float(np.dot(estimated_velocity, offset_dir))
-        # damping factor decreases command when approach_speed is large
-        damping = 1.0 / (1.0 + VELOCITY_DAMPING_K * abs(approach_speed))
-
-        # Combined scale
-        combined_scale = float(distance_scale * damping)
-
-        # Apply scaling to offset to produce delta command (target position relative to current pos)
-        delta_cmd = offset * combined_scale
-
-        # Clamp the per-cycle commanded change to limits (safety)
-        delta_cmd = self.__clamp_delta(
-            delta_cmd, MAX_POSITION_CHANGE_PER_CYCLE, MAX_AXIAL_CHANGE_PER_CYCLE)
-
-        # Compute final commanded target position in base frame
-        final_command_pos = current_pos_base + delta_cmd
-
-        # Log control parameters for debugging
-        logger.info(f"📊 Dist: {distance*1000:.1f}mm, Vel: {np.linalg.norm(estimated_velocity)*1000:.1f}mm/s, "
-                    f"Scale: {distance_scale:.2f}, Damp: {damping:.2f}, Cmd: {np.linalg.norm(delta_cmd)*1000:.1f}mm")
-
-        # If very small (inside exit dead zone) and robot slow, avoid sending IK: let dead-zone logic hold
-        if np.linalg.norm(final_command_pos - current_pos_base) < (DEAD_ZONE_EXIT_M * 0.5) and np.linalg.norm(estimated_velocity) < STABLE_VELOCITY_THRESHOLD:
-            logger.debug("Delta too small and robot slow - skipping IK send")
-            return
-
-        # IMPROVED: Use position-only target with yaw freedom for robust IK
-        # This allows the IK solver to try multiple yaw angles and find the best
-        # reachable configuration, dramatically improving convergence success rate.
-        # The solver will automatically maintain facing-down orientation while
-        # searching through yaw redundancy (12 yaw samples × 5 position samples = 60 IK trials).
-        target_position = final_command_pos.tolist()  # [x, y, z] only
-
-        logger.debug(
-            f"Solving IK for position {target_position} with yaw freedom")
+        # Solve IK for target position
+        target_position = desired_target_base.tolist()  # [x, y, z] only
 
         # Use comprehensive search with yaw freedom
         solutions = self.context.ik.solve_with_position_and_yaw_search(
@@ -411,14 +368,19 @@ class UnifiedHandTrackingState(BaseState):
             best_solution, quality, perturbed_pos, yaw = solutions[0]
             target_joints = best_solution[:7]  # Take first 7 joints
 
-            logger.debug(f"Best IK solution: quality={quality:.3f}, "
-                         f"perturbed_pos={perturbed_pos}, yaw={yaw:.2f}rad")
+            logger.info(
+                f"✅ IK solution found (quality={quality:.3f}), sending move command")
 
-            # Send the joint setpoint command through existing command pipeline
+            # Send the joint command
             self.context.commands.send(SetJoints(list(target_joints)))
+
+            # Set flags to wait for move completion
+            self.is_moving_to_target = True
+            self.waiting_for_move_completion = True
+            self.move_start_time = current_time
         else:
-            logger.warning("IK solve failed for target_pos=%s - no solutions found",
-                           target_position)
+            logger.warning("❌ IK solve failed - no solutions found")
+            self.is_moving_to_target = False
 
     def __estimate_robot_velocity(self, current_pos: np.ndarray, current_time: float, last_pos: Optional[np.ndarray], last_time: Optional[float]) -> np.ndarray:
         """
