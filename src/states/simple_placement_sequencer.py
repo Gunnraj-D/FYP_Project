@@ -157,20 +157,29 @@ class SimplePlacementSequencer:
             object_height = 0.05  # Default 5cm if not available
 
         # Calculate placement positions
-        # Move down by object height + PLACE_RELEASE_DISTANCE to place the object
-        place_distance = object_height + PLACE_RELEASE_DISTANCE
+        # We are currently 15cm above the hand (from approach state)
+        # We need to move down by (15cm - object_height + 3cm) to place the object
+        # This ensures the object is placed slightly below the hand surface
+        current_height_above_hand = 0.15  # 15cm from approach state
+        buffer_distance = 0.03  # 3cm buffer below hand surface
+        place_distance = current_height_above_hand - object_height + buffer_distance
         self.place_position = current_position - \
             np.array([0, 0, place_distance])
-        # Move up by PLACE_APPROACH_DISTANCE to retreat
+        # Move up by 10cm to retreat (about 5cm from original 15cm position)
+        retreat_distance = 0.10  # 10cm up from current position
         self.retreat_position = current_position + \
-            np.array([0, 0, PLACE_APPROACH_DISTANCE])
+            np.array([0, 0, retreat_distance])
 
         logger.info(f"Current position: {current_position}")
         logger.info(f"Object height: {object_height:.3f}m")
         logger.info(
-            f"Place position (down {place_distance:.3f}m): {self.place_position}")
+            f"Current height above hand: {current_height_above_hand:.3f}m")
+        logger.info(f"Buffer distance: {buffer_distance:.3f}m")
         logger.info(
-            f"Retreat position (up {PLACE_APPROACH_DISTANCE:.3f}m): {self.retreat_position}")
+            f"Place distance (15cm - object_height + 3cm): {place_distance:.3f}m")
+        logger.info(f"Place position: {self.place_position}")
+        logger.info(f"Retreat distance: {retreat_distance:.3f}m")
+        logger.info(f"Retreat position: {self.retreat_position}")
 
         # Create final states
         self.final_states = [
