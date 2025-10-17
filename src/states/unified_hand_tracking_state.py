@@ -80,6 +80,8 @@ class UnifiedHandTrackingState(BaseState):
         occlusion_config = OcclusionConfig(**HAND_OCCLUSION_CONFIG)
         self.occlusion_detector = HandOcclusionDetector(occlusion_config)
         self.occlusion_failed = False
+        # Timeout flag to distinguish timeout completion from success
+        self.timed_out = False
 
         # Single-move strategy: move once to deadzone center, wait, then check if reposition needed
         self.is_moving_to_target = False
@@ -128,6 +130,7 @@ class UnifiedHandTrackingState(BaseState):
             # Reset occlusion detector
             self.occlusion_detector.reset()
             self.occlusion_failed = False
+            self.timed_out = False
 
             print("✅ UnifiedHandTrackingState initialized successfully")
             logger.info("✅ UnifiedHandTrackingState initialized successfully")
@@ -495,6 +498,8 @@ class UnifiedHandTrackingState(BaseState):
         timeout_threshold = 20.0  # 20 seconds timeout
         if elapsed_time > timeout_threshold:
             logger.warning("Hand tracking timeout reached")
+            # Mark as timed out so the sequencer can route to fallback instead of success
+            self.timed_out = True
             return True
 
         return False
@@ -504,7 +509,8 @@ class UnifiedHandTrackingState(BaseState):
         Check if the hand tracking state failed due to occlusion.
         This can be used by the sequencer to determine if fallback is needed.
         """
-        return self.occlusion_failed
+        # Treat either occlusion or timeout as a failure for the sequencer flow
+        return self.occlusion_failed or getattr(self, 'timed_out', False)
 
     def exit(self):
         """Clean up hand tracker and log final results."""

@@ -14,6 +14,7 @@ from config import (
     print_config_summary
 )
 from states.placement_task_sequencer import PlacementTaskSequencer, create_placement_sequencer
+from states.simple_placement_sequencer import SimplePlacementSequencer, create_simple_placement_sequencer
 from states.pickup_task_sequencer import PickupTaskSequencer, create_pickup_sequencer
 from states.grasping_state import GraspingState
 from states.unified_hand_tracking_state import UnifiedHandTrackingState
@@ -380,6 +381,7 @@ class DebugSystemManager:
         sequencers = {
             1: "Pickup Task Sequencer",
             2: "Placement Task Sequencer",
+            3: "Simple Placement Sequencer (Hardcoded)",
         }
         return sequencers
 
@@ -459,15 +461,20 @@ class DebugSystemManager:
         elif sequencer_type == "Placement Task Sequencer":
             sequencer = create_placement_sequencer(
                 self.state_machine, self.context)
+        elif sequencer_type == "Simple Placement Sequencer (Hardcoded)":
+            sequencer = create_simple_placement_sequencer(
+                self.state_machine, self.context)
         else:
             print(f"❌ Unknown sequencer type: {sequencer_type}")
             return
 
-        # Set the state machine's completion callback to queue the next task
-        self.state_machine.on_state_completion = sequencer.queue_next_task
+        # Simple sequencer has different interface (no task_queue or queue_next_task)
+        is_simple = isinstance(sequencer, SimplePlacementSequencer)
 
-        # Queue the first task to start the sequence
-        sequencer.queue_next_task()
+        if not is_simple:
+            # Traditional sequencer with task queue
+            self.state_machine.on_state_completion = sequencer.queue_next_task
+            sequencer.queue_next_task()
 
         self.execution_active = True
         self.force_complete = False
@@ -475,7 +482,7 @@ class DebugSystemManager:
         sequence_complete = False
 
         try:
-            # Run until sequence is complete (queue empty AND current state done)
+            # Run until sequence is complete
             while not sequence_complete and not self.force_complete:
                 sequencer.step()
                 time.sleep(0.1)  # 10Hz execution rate
@@ -488,10 +495,28 @@ class DebugSystemManager:
                                 f"({progress['progress_percent']:.1f}%)")
                     last_logged_step = current_step
 
-                # Check if truly complete: queue empty AND current state finished
-                if not sequencer.task_queue and self.state_machine.current_state.is_complete():
-                    sequence_complete = True
-                    logger.info("All sequence states completed")
+                if is_simple:
+                    # Simple sequencer: just check if complete
+                    if sequencer.is_complete():
+                        sequence_complete = True
+                        logger.info("All sequence states completed")
+                        break
+                else:
+                    # Traditional sequencer: check queue and state
+                    if not sequencer.task_queue and self.state_machine.current_state.is_complete():
+                        # Give the sequencer a chance to enqueue follow-up states
+                        try:
+                            sequencer.queue_next_task()
+                        except Exception:
+                            pass
+                        # Re-check after attempting to queue
+                        if not sequencer.task_queue and self.state_machine.current_state.is_complete():
+                            sequence_complete = True
+                            logger.info("All sequence states completed")
+                            break
+                        else:
+                            # Continue loop to execute newly queued state(s)
+                            continue
 
                 # Check for user input to force completion
                 if self._check_for_force_complete():
@@ -500,6 +525,14 @@ class DebugSystemManager:
         except Exception as e:
             print(f"❌ Error executing sequencer: {e}")
         finally:
+            # Ensure the current state is properly exited to stop any background workers (e.g., HandTracker)
+            try:
+                if self.state_machine and self.state_machine.current_state:
+                    print(
+                        f"Exiting state: {self.state_machine.current_state.name}")
+                    self.state_machine.current_state.exit()
+            except Exception as e:
+                print(f"⚠️ Error during state exit: {e}")
             self.execution_active = False
             print(f"✅ Completed: {sequencer_type}")
 

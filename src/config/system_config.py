@@ -140,11 +140,11 @@ STAGED_FINE_DISTANCE = 0.05
 # unitless damping coefficient; higher -> more damping
 VELOCITY_DAMPING_K = 4.0  # Increased to 4.0 for smoother motion and less jitter
 
-# Dead zone hysteresis & stability thresholds
-# entry threshold (30mm) - precise for hand placement
-DEAD_ZONE_ENTRY_M = 0.030
-# exit threshold (20mm) - tight hold for accuracy
-DEAD_ZONE_EXIT_M = 0.020
+# Dead zone hysteresis & stability thresholds (slightly increased for more robustness)
+# entry threshold (32mm) - more tolerant to noise
+DEAD_ZONE_ENTRY_M = 0.04
+# exit threshold (22mm) - slightly larger hold zone
+DEAD_ZONE_EXIT_M = 0.03
 # m/s, robot must be slower than this to be "stable"
 # Increased - allow slightly faster motion to be considered stable
 STABLE_VELOCITY_THRESHOLD = 0.015
