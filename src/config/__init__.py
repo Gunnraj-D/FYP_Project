@@ -181,7 +181,6 @@ __all__ = [
     'set_camera_transform_mode',
     'get_camera_transform_info',
     'print_camera_transform_info',
-
     # Grasp detection
     'SIMPLE_GRASP_CONFIG',      # Simplified user-facing config
     'GRASP_MODEL_TYPE',

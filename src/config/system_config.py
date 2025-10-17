@@ -45,6 +45,11 @@ HAND_STABILITY_THRESHOLD = 0.02  # How stable the hand should be (meters)
 # How long hand needs to remain stable (seconds)
 HAND_STABILITY_TIME_THRESHOLD = 2.0
 
+# Hand occlusion detection parameters
+HAND_OCCLUSION_THRESHOLD = 0.5  # Threshold for detecting hand occlusion
+# Number of consecutive frames for occlusion detection
+HAND_OCCLUSION_FRAMES_THRESHOLD = 3
+
 # Z-coordinate filtering parameters (added for adaptive Z filtering)
 # EMA alpha when depth quality is good (higher -> faster)
 Z_FILTER_ALPHA_GOOD = 0.5  # Reduced for smoother Z tracking

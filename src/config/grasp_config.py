@@ -81,11 +81,10 @@ GRASP_DETECTION_CONFIG = {
 
     # Table height and calibration correction
     # Table Z coordinate in base frame (meters)
-    'table_height_base_frame': 0.142,
-    # Depth offset: calibration correction only
-    # Original offset was 0.04, gripper was 10cm too high
-    # So we need LESS offset, not more
-    'grasp_depth_offset': -0.06,  # -60mm: reduce by 100mm from original 40mm
+    'table_height_base_frame': 0.001,
+    # Grasp height correction offset (meters) - applied to final grasp Z
+    # Positive value moves gripper UP, negative moves DOWN
+    'grasp_height_offset': 0.105,  # 85mm correction for calibration offset
     'vertical_approach': True,          # Use vertical approach angle
     'approach_angle': -90.0,            # Approach angle in degrees
     'frame_processing_interval': 0.5,   # Process frames every N seconds

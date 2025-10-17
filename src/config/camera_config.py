@@ -62,6 +62,9 @@ HAND_EYE_MATRIX_SIMPLE = np.array([
 # Select the active hand-eye matrix based on mode
 HAND_EYE_MATRIX = HAND_EYE_MATRIX_CALIBRATED if CAMERA_TRANSFORM_MODE == 'calibrated' else HAND_EYE_MATRIX_SIMPLE
 
+# Hand-eye convention flag for transform module: 'tcp_T_camera' or 'camera_T_tcp'
+# If your stored matrix is camera_T_tcp, set to 'camera_T_tcp' to invert internally
+
 
 def set_camera_transform_mode(mode: str):
     """

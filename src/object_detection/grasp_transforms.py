@@ -19,6 +19,10 @@ from config import GRASP_DETECTION_CONFIG, CAMERA_ROTATION_EULER
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# GRASP TRANSFORMER CLASS
+# ============================================================================
+
 class GraspTransformer:
     """
     Transforms grasp poses between coordinate frames.
@@ -40,6 +44,10 @@ class GraspTransformer:
         self.kinematics_solver = kinematics_solver
         self.telemetry = telemetry
 
+    # ========================================================================
+    # 2D TO 3D CONVERSION
+    # ========================================================================
+
     def grasp_2d_to_3d_pose(self, grasp_2d: dict, depth_image: np.ndarray,
                             original_depth_frame=None) -> Optional[List[float]]:
         """
@@ -52,7 +60,9 @@ class GraspTransformer:
 
         Returns:
             [x, y, z, roll, pitch, yaw] in camera frame (meters, radians)
-            or None if conversion fails
+
+        Raises:
+            ValueError: If depth is invalid or conversion fails
         """
         try:
             center_u, center_v = grasp_2d["center"]
@@ -64,124 +74,102 @@ class GraspTransformer:
             angle += angle_offset_rad
 
             # Scale coordinates back to original image resolution
-            h_orig = original_depth_frame.get_height(
-            ) if original_depth_frame else depth_image.shape[0]
-            w_orig = original_depth_frame.get_width(
-            ) if original_depth_frame else depth_image.shape[1]
+            scaled_u, scaled_v = self._scale_coordinates(
+                center_u, center_v, depth_image, original_depth_frame
+            )
 
-            scale_u = w_orig / 300.0
-            scale_v = h_orig / 300.0
-
-            center_u_scaled = center_u * scale_u
-            center_v_scaled = center_v * scale_v
-
-            # Get depth - PREFER the pre-calculated depth from postprocessor
-            depth_m = grasp_2d.get('depth_m', None)
-            logger.warning(f"🔍 TRANSFORM: grasp_2d depth_m = {depth_m}")
-
-            if depth_m is not None and depth_m > 0:
-                logger.warning(
-                    f"✅ USING PRE-CALC DEPTH: {depth_m:.3f}m from postprocessor")
-            else:
-                logger.warning(
-                    f"⚠️ NO VALID PRE-CALC DEPTH (got {depth_m}), re-sampling...")
-                # Fallback: recalculate depth at grasp center
-                depth_m = None
-                if isinstance(depth_image, np.ndarray) and 'object_mask' in grasp_2d and grasp_2d['object_mask'] is not None:
-                    radius_px = int(GRASP_DETECTION_CONFIG.get(
-                        'depth_sample_radius', 5))
-                    u0 = max(0, int(center_u) - radius_px)
-                    u1 = min(depth_image.shape[1], int(
-                        center_u) + radius_px + 1)
-                    v0 = max(0, int(center_v) - radius_px)
-                    v1 = min(depth_image.shape[0], int(
-                        center_v) + radius_px + 1)
-                    roi = depth_image[v0:v1, u0:u1]
-                    mroi = grasp_2d['object_mask'][v0:v1, u0:u1]
-                    vals = roi[(roi > 0) & (mroi.astype(bool))]
-                    if vals.size > 0:
-                        method = GRASP_DETECTION_CONFIG.get(
-                            'depth_sample_method', 'p_low')
-                        if method == 'min':
-                            depth_m = float(np.min(vals))
-                        elif method in ('p_low', 'percentile'):
-                            p = float(GRASP_DETECTION_CONFIG.get(
-                                'depth_sample_percentile', 15.0))
-                            p = np.clip(p, 0.0, 50.0)
-                            depth_m = float(np.percentile(vals, p))
-                        else:
-                            depth_m = float(np.median(vals))
-
-            if depth_m is None or depth_m <= 0:
-                depth_source = original_depth_frame if original_depth_frame else depth_image
-                depth_m, _quality = self.camera_manager.get_average_depth(
-                    depth_source,
-                    (int(center_u_scaled), int(center_v_scaled)),
-                    radius=GRASP_DETECTION_CONFIG.get(
-                        'depth_sample_radius', 5),
-                    method=GRASP_DETECTION_CONFIG.get(
-                        'depth_sample_method', 'p_low'),
-                    percentile_low=float(GRASP_DETECTION_CONFIG.get(
-                        'depth_sample_percentile', 15.0))
-                )
-
-            if depth_m is None or depth_m <= 0:
-                logger.warning(f"Invalid depth at grasp center: depth={depth_m}, "
-                               f"center=({int(center_u_scaled)}, {int(center_v_scaled)})")
-                return None
+            # Get depth at grasp center
+            depth_m = self._get_grasp_depth(
+                grasp_2d, depth_image, scaled_u, scaled_v, original_depth_frame
+            )
 
             # Convert pixel to 3D coordinates in camera frame
             x, y, z = self.camera_manager.pixel_to_3d(
-                int(center_u_scaled), int(center_v_scaled), depth_m
+                int(scaled_u), int(scaled_v), depth_m
             )
 
-            # CONDITIONAL Z negation based on transform mode
-            from config import CAMERA_TRANSFORM_MODE
-            if CAMERA_TRANSFORM_MODE == 'simple':
-                # Simple mode needs Z negation for downward camera
-                z = -z
-                z_note = "[Z negated for simple mode]"
-            else:
-                # Calibrated mode - matrix already accounts for camera orientation
-                z_note = "[Z unchanged for calibrated mode]"
+            logger.warning(
+                f"📍 pixel_to_3d: px=({int(scaled_u)},{int(scaled_v)}), "
+                f"depth={depth_m:.3f}m → cam_xyz=({x:.3f}, {y:.3f}, {z:.3f})"
+            )
 
-            logger.warning(f"📍 pixel_to_3d: px=({int(center_u_scaled)},{int(center_v_scaled)}), "
-                           f"depth={depth_m:.3f}m → cam_xyz=({x:.3f}, {y:.3f}, {z:.3f}) {z_note}")
-
-            # Create grasp orientation in camera frame with facing-down orientation
-            # Use compose_grasp_orientation to create proper R_down @ R_z rotation
+            # Create grasp orientation in camera frame
             grasp_orientation_matrix = self.compose_grasp_orientation(angle)
             grasp_rpy_camera = R.from_matrix(
                 grasp_orientation_matrix).as_euler('xyz')
 
             pose = [x, y, z] + grasp_rpy_camera.tolist()
-            logger.debug(f"3D grasp pose (camera frame): pos={pose[:3]}, "
-                         f"ori(deg)=[{np.degrees(pose[3]):.1f}, {np.degrees(pose[4]):.1f}, {np.degrees(pose[5]):.1f}]")
+            logger.debug(
+                f"3D grasp pose (camera frame): pos={pose[:3]}, "
+                f"ori(deg)=[{np.degrees(pose[3]):.1f}, {np.degrees(pose[4]):.1f}, {np.degrees(pose[5]):.1f}]"
+            )
 
             return pose
 
         except Exception as e:
             logger.error(f"Failed to convert 2D grasp to 3D pose: {e}")
-            return None
+            raise ValueError(f"2D to 3D grasp conversion failed: {e}")
+
+    def _scale_coordinates(self, center_u: float, center_v: float,
+                           depth_image: np.ndarray, original_depth_frame) -> tuple:
+        """Scale coordinates from 300x300 to original resolution."""
+        if original_depth_frame:
+            h_orig = original_depth_frame.get_height()
+            w_orig = original_depth_frame.get_width()
+        else:
+            h_orig = depth_image.shape[0]
+            w_orig = depth_image.shape[1]
+
+        scale_u = w_orig / 300.0
+        scale_v = h_orig / 300.0
+
+        scaled_u = center_u * scale_u
+        scaled_v = center_v * scale_v
+
+        return scaled_u, scaled_v
+
+    def _get_grasp_depth(self, grasp_2d: dict, depth_image: np.ndarray,
+                         scaled_u: float, scaled_v: float, original_depth_frame) -> float:
+        """
+        Get depth at grasp center, preferring pre-calculated depth.
+
+        Raises:
+            ValueError: If no valid depth can be obtained
+        """
+        # PREFER the pre-calculated depth from postprocessor
+        depth_m = grasp_2d.get('depth_m', None)
+        logger.warning(f"🔍 TRANSFORM: grasp_2d depth_m = {depth_m}")
+
+        if depth_m is not None and depth_m > 0:
+            logger.warning(
+                f"✅ USING PRE-CALC DEPTH: {depth_m:.3f}m from postprocessor")
+            return depth_m
+
+        # No valid pre-calculated depth - this should not happen
+        raise ValueError(
+            f"No valid pre-calculated depth available (got {depth_m}). "
+            "Depth must be calculated by postprocessor before transformation."
+        )
+
+    # ========================================================================
+    # CAMERA TO BASE FRAME TRANSFORMATION
+    # ========================================================================
 
     def transform_to_base_frame(self, camera_pose: List[float]) -> Optional[List[float]]:
         """
         Transform grasp pose from camera frame to robot base frame.
 
-        Accounts for:
-        - Camera mounting orientation relative to TCP
-        - Current TCP pose in base frame
-        - Proper rotation composition
-
         Args:
             camera_pose: [x,y,z, roll,pitch,yaw] in camera frame
 
         Returns:
-            [x,y,z, roll,pitch,yaw] in base frame (meters, radians)
-            or None if transformation fails
+            [x,y,z, roll,pitch,yaw] in base frame
+
+        Raises:
+            ValueError: If transformation fails
         """
         try:
-            # Get current TCP pose
+            # Get current TCP pose from joints
             current_joints = self.telemetry.get_current_joints()
             if len(current_joints) != 7:
                 logger.warning("Invalid current joint positions")
@@ -190,33 +178,46 @@ class GraspTransformer:
             tcp_matrix, _ = self.kinematics_solver.tcp_from_joints(
                 current_joints.tolist())
 
-            # Transform position from camera to base frame
-            camera_position = camera_pose[:3]
+            # Transform position
+            camera_position = np.array(camera_pose[:3])
             base_position = transform_camera_to_base(
                 camera_position, tcp_matrix)
-
-            logger.warning(
-                f"🌍 Camera→Base: cam_xyz={camera_position} → base_xyz={base_position}")
-
-            # Safety check: Z coordinate above workspace floor
-            if base_position[2] < 0.0:
-                logger.warning(f"Grasp position below workspace floor: Z={base_position[2]:.3f}m, "
-                               f"clamping to 0.0m")
-                base_position[2] = 0.0
 
             # Transform orientation
             base_orientation = self._transform_orientation(
                 camera_pose[3:6], tcp_matrix)
 
+            # Apply height correction offset
+            from config import GRASP_DETECTION_CONFIG
+            height_offset = GRASP_DETECTION_CONFIG.get(
+                'grasp_height_offset', 0.0)
+            base_position[2] += height_offset
+
             # Compose final base pose
             base_pose = base_position.tolist() + base_orientation.tolist()
+
             logger.debug(f"Transformed base frame grasp pose: {base_pose}")
+
+            # Validate Z is positive (but don't fail - let grasping_state handle it)
+            if base_pose[2] < 0.0:
+                logger.warning(
+                    f"Transformed grasp Z={base_pose[2]:.3f}m is below workspace floor (Z=0). "
+                    "Will be handled by grasping_state validation.")
 
             return base_pose
 
         except Exception as e:
             logger.error(f"Failed to transform to base frame: {e}")
-            return None
+            raise ValueError(
+                f"Camera to base frame transformation failed: {e}")
+
+    def _build_transform_matrix(self, tcp_pose: List[float]) -> np.ndarray:
+        """Build 4x4 transformation matrix from TCP pose."""
+        tcp_rot = R.from_euler('xyz', tcp_pose[3:6])
+        tcp_matrix = np.eye(4)
+        tcp_matrix[:3, :3] = tcp_rot.as_matrix()
+        tcp_matrix[:3, 3] = tcp_pose[:3]
+        return tcp_matrix
 
     def _transform_orientation(self, grasp_rpy_camera: List[float],
                                tcp_matrix: np.ndarray) -> np.ndarray:
@@ -254,6 +255,10 @@ class GraspTransformer:
 
         return grasp_rpy_base
 
+    # ========================================================================
+    # GRASP ORIENTATION COMPOSITION
+    # ========================================================================
+
     def compose_grasp_orientation(self, grasp_angle_rad: float) -> np.ndarray:
         """
         Compose grasp orientation from 2D angle.
@@ -277,28 +282,37 @@ class GraspTransformer:
         R_z = R.from_euler('z', grasp_angle_rad).as_matrix()
         R_down = get_facing_down_orientation()
 
-        # Compose based on configuration
+        # Get composition order from config
         compose_order = GRASP_DETECTION_CONFIG.get(
             'compose_order', 'down_then_z')
 
         if compose_order == 'down_then_z':
             # Recommended: align orientation in base frame, then point down
             target_orientation = R_down @ R_z
-        else:
+        elif compose_order == 'z_then_down':
             # Alternative: point down first, then rotate in downward-pointing frame
             target_orientation = R_z @ R_down
+        else:
+            raise ValueError(
+                f"Invalid compose_order: {compose_order}. Must be 'down_then_z' or 'z_then_down'")
 
         # Log resulting orientation
         result_rpy = R.from_matrix(target_orientation).as_euler('xyz')
         logger.info(f"🎯 Grasp orientation composition:")
-        logger.info(f"   Base frame RPY: [R={np.degrees(result_rpy[0]):6.1f}°, "
-                    f"P={np.degrees(result_rpy[1]):6.1f}°, Y={np.degrees(result_rpy[2]):6.1f}°]")
+        logger.info(
+            f"   Base frame RPY: [R={np.degrees(result_rpy[0]):6.1f}°, "
+            f"P={np.degrees(result_rpy[1]):6.1f}°, Y={np.degrees(result_rpy[2]):6.1f}°]"
+        )
         logger.info(
             f"   └─ Yaw ({np.degrees(result_rpy[2]):.1f}°) = jaw closing axis")
 
         return target_orientation
 
-    def pose_to_joint_angles(self, pose: List[float]) -> Optional[np.ndarray]:
+    # ========================================================================
+    # INVERSE KINEMATICS
+    # ========================================================================
+
+    def pose_to_joint_angles(self, pose: List[float]) -> np.ndarray:
         """
         Convert grasp pose to joint angles using inverse kinematics.
 
@@ -306,32 +320,40 @@ class GraspTransformer:
             pose: [x,y,z, roll,pitch,yaw] in base frame (meters, radians)
 
         Returns:
-            Array of 7 joint angles (radians) or None if IK fails
+            Array of 7 joint angles (radians)
+
+        Raises:
+            ValueError: If IK fails or current joints are invalid
         """
         try:
+            # Get current joint positions
             current_joints = self.telemetry.get_current_joints()
             if len(current_joints) != 7:
-                logger.warning("Invalid current joint positions")
-                return None
+                raise ValueError(
+                    f"Invalid current joint positions: expected 7, got {len(current_joints)}")
 
-            # Final safety check for Z coordinate
-            pose_meters = list(pose)
-            if pose_meters[2] < 0.0:
-                logger.warning(f"Final pose Z below workspace floor: {pose_meters[2]:.3f}m, "
-                               f"clamping to 0.0m")
-                pose_meters[2] = 0.0
+            # Validate pose is above workspace floor
+            if pose[2] < 0.0:
+                raise ValueError(
+                    f"Grasp pose Z={pose[2]:.3f}m is below workspace floor (Z=0). "
+                    "Cannot compute IK for invalid pose."
+                )
 
-            logger.info(f"Final pose for IK: position={pose_meters[:3]}, "
-                        f"orientation(deg)=[{np.degrees(pose_meters[3]):.1f}, {np.degrees(pose_meters[4]):.1f}, {np.degrees(pose_meters[5]):.1f}]")
+            logger.debug(
+                f"Computing IK for pose: position={pose[:3]}, "
+                f"orientation(deg)=[{np.degrees(pose[3]):.1f}, {np.degrees(pose[4]):.1f}, {np.degrees(pose[5]):.1f}]"
+            )
 
             # Solve IK
             joint_angles = self.kinematics_solver.solve_pose(
-                pose_meters, current_joints.tolist()
-            )
+                pose, current_joints.tolist())
 
-            logger.debug(f"Joint angles: {joint_angles}")
+            if joint_angles is None:
+                raise ValueError("IK solver returned None - no solution found")
+
+            logger.debug(f"IK solution: {joint_angles}")
             return joint_angles
 
         except Exception as e:
             logger.error(f"Failed to convert pose to joint angles: {e}")
-            return None
+            raise ValueError(f"IK computation failed: {e}")

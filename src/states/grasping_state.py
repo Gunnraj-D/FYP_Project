@@ -219,7 +219,7 @@ class GraspingState(BaseState):
                 candidate = self._create_candidate(
                     grasp_result, self.frames_collected)
                 self.collected_candidates.append(candidate)
-                logger.info(
+                logger.debug(
                     f"📸 Frame {self.frames_collected + 1}/{self.num_collection_frames}: "
                     f"Quality={candidate.quality:.3f}, Score={candidate.multi_factor_score:.4f}")
             else:
@@ -356,27 +356,27 @@ class GraspingState(BaseState):
 
         # Log selection results
         logger.info(f"\n{'='*70}")
-        logger.info(f"🎯 BEST-OF-{self.frames_collected} GRASP SELECTION")
+        logger.debug(f"🎯 BEST-OF-{self.frames_collected} GRASP SELECTION")
         logger.info(f"{'='*70}")
-        logger.info(f"Total candidates: {len(self.collected_candidates)}")
-        logger.info(
+        logger.debug(f"Total candidates: {len(self.collected_candidates)}")
+        logger.debug(
             f"Collection time: {time.time() - self.collection_start_time:.2f}s")
-        logger.info(
+        logger.debug(
             f"\n🏆 BEST GRASP (Frame {self.best_grasp.frame_index + 1}):")
-        logger.info(f"  Score:   {self.best_grasp.multi_factor_score:.4f}")
-        logger.info(f"  Quality: {self.best_grasp.quality:.3f}")
-        logger.info(f"  Width:   {self.best_grasp.width_mm:.1f}mm")
-        logger.info(f"  Overlap: {self.best_grasp.object_overlap:.2f}")
-        logger.info(f"  Border:  {self.best_grasp.border_distance:.2f}")
+        logger.debug(f"  Score:   {self.best_grasp.multi_factor_score:.4f}")
+        logger.debug(f"  Quality: {self.best_grasp.quality:.3f}")
+        logger.debug(f"  Width:   {self.best_grasp.width_mm:.1f}mm")
+        logger.debug(f"  Overlap: {self.best_grasp.object_overlap:.2f}")
+        logger.debug(f"  Border:  {self.best_grasp.border_distance:.2f}")
 
         # Show top 3 for comparison
         if len(self.collected_candidates) >= 2:
-            logger.info(f"\n📊 Top 3 Alternatives:")
+            logger.debug(f"\n📊 Top 3 Alternatives:")
             for i, candidate in enumerate(self.collected_candidates[1:4], 2):
-                logger.info(f"  {i}. Frame {candidate.frame_index + 1}: "
-                            f"Score={candidate.multi_factor_score:.4f}, "
-                            f"Q={candidate.quality:.3f}, "
-                            f"W={candidate.width_mm:.1f}mm")
+                logger.debug(f"  {i}. Frame {candidate.frame_index + 1}: "
+                             f"Score={candidate.multi_factor_score:.4f}, "
+                             f"Q={candidate.quality:.3f}, "
+                             f"W={candidate.width_mm:.1f}mm")
 
         logger.info(f"{'='*70}\n")
 
@@ -389,26 +389,39 @@ class GraspingState(BaseState):
             # Extract pose (already in base frame)
             grasp_pose_base = list(candidate.pose)
 
-            # Apply table height correction and safety offset
-            # The calibrated transform doesn't account for table height properly,
-            # so we correct it based on known table height
+            # Validate geometric Z from transform - must be above table
             table_height = GRASP_DETECTION_CONFIG.get(
-                'table_height_base_frame', 0.142)
-            depth_offset = GRASP_DETECTION_CONFIG.get(
-                'grasp_depth_offset', 0.04)
-
+                'table_height_base_frame', 0.01)
             original_z = grasp_pose_base[2]
-            # Correct Z: current Z is relative to some reference, add table height + offset
-            corrected_z = original_z + table_height + depth_offset
-            grasp_pose_base[2] = corrected_z
 
-            logger.info(f"📏 Z correction: raw={original_z:.3f}m + table={table_height:.3f}m + "
-                        f"offset={depth_offset:.3f}m = {corrected_z:.3f}m")
+            # Check if grasp is below table - this is a critical error
+            if original_z < table_height:
+                error_msg = (
+                    f"\n{'='*70}\n"
+                    f"❌ CRITICAL ERROR: GRASP BELOW TABLE\n"
+                    f"{'='*70}\n"
+                    f"Grasp Z:      {original_z:.4f}m\n"
+                    f"Table Z:      {table_height:.4f}m\n"
+                    f"Difference:   {(table_height - original_z)*1000:.1f}mm BELOW table\n"
+                    f"\nThis indicates a calibration or transform error.\n"
+                    f"Check:\n"
+                    f"  1. Hand-eye matrix is correct\n"
+                    f"  2. Camera intrinsics are accurate\n"
+                    f"  3. Depth estimation is working properly\n"
+                    f"  4. Table height is set correctly ({table_height}m)\n"
+                    f"{'='*70}\n"
+                )
+                logger.error(error_msg)
+                print(error_msg)  # Ensure visibility in console
+                raise ValueError(
+                    f"Grasp position below table: Z={original_z:.4f}m < table={table_height:.4f}m")
 
             # Orientation already determined by pipeline; no manual rotation
 
             # Store grasp height
             grasp_height = grasp_pose_base[2]
+            logger.info(
+                f"📏 Final grasp Z: {grasp_height:.3f}m (table={table_height:.3f}m, clearance={(grasp_height-table_height)*1000:.1f}mm)")
             self.context.telemetry.update_grasp_height(grasp_height)
 
             # Store grasp pose

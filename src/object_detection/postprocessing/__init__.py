@@ -382,25 +382,23 @@ class GraspPostprocessor:
                     mask_pixels = np.sum(local_mask)
                     total_pixels = local_mask.size
 
-                    logger.info(
+                    logger.debug(
                         f"🔍 Depth at ({u},{v}): mask={mask_pixels}/{total_pixels} ({100*mask_pixels/total_pixels:.0f}%), valid_depths={obj_depths.size}")
                     if obj_depths.size > 0:
-                        logger.info(
+                        logger.debug(
                             f"   Range: {obj_depths.min():.3f}m - {obj_depths.max():.3f}m, median={np.median(obj_depths):.3f}m")
 
                     if obj_depths.size >= 5:
-                        # Use 15th percentile - finds object surface even if most pixels show table
-                        # 15th percentile is safer than 10th to avoid noise
+                        # Take median of closest 30% of masked depths (robust to edge noise)
                         sorted_depths = np.sort(obj_depths)
-                        n_samples = max(5, int(len(sorted_depths) * 0.15))
-                        shallow_samples = sorted_depths[:n_samples]
-                        local_depth_m = float(np.median(shallow_samples))
+                        n_samples = max(5, int(len(sorted_depths) * 0.30))
+                        closest = sorted_depths[:n_samples]
+                        local_depth_m = float(np.median(closest))
 
-                        cell_mins = list(shallow_samples[:9]) if len(
-                            shallow_samples) >= 9 else list(shallow_samples)
-                        median_of_mins = local_depth_m
-                        logger.info(
-                            f"   ✅ Calc depth: {local_depth_m:.3f}m (15th %ile median, {n_samples} pts)")
+                        cell_mins = None
+                        median_of_mins = None
+                        logger.debug(
+                            f"   ✅ Calc depth: {local_depth_m:.3f}m (median of closest 30%, {n_samples} pts)")
                     else:
                         # Fallback: use global median if not enough local data
                         local_depth_m = median_depth_m
@@ -413,9 +411,9 @@ class GraspPostprocessor:
                     median_of_mins = None
                     cell_mins = None
 
-                # Debug grasp height estimation
-                self._debug_grasp_height(u, v, depth_image, object_mask, q_np,
-                                         local_depth_m, median_depth_m, cell_mins, median_of_mins)
+                # Debug grasp height estimation (disabled for minimal output)
+                # self._debug_grasp_height(u, v, depth_image, object_mask, q_np,
+                #                          local_depth_m, median_depth_m, cell_mins, median_of_mins)
 
                 px_to_mm = self._compute_px_to_mm(local_depth_m)
                 quality = float(q_np[v, u])
@@ -470,9 +468,10 @@ class GraspPostprocessor:
 
             # Debug: candidate counts and reasons (first 5)
             try:
-                logger.info(f"Postprocess candidates: total={len(candidates)}")
+                logger.debug(
+                    f"Postprocess candidates: total={len(candidates)}")
                 for c in candidates[:5]:
-                    logger.info(
+                    logger.debug(
                         f"  cand @({c.u},{c.v}) q={c.quality:.3f} ov={c.object_overlap:.2f} b={c.border_distance:.2f} w={c.width_mm:.1f}mm valid={c.is_valid} reason={c.validity_reason}")
             except Exception:
                 pass
@@ -599,10 +598,10 @@ class GraspPostprocessor:
 
         # Debug logging
         if DEBUG_MODE and len(valid_candidates) > 1:
-            logger.info(f"📊 Top {min(3, len(valid_candidates))} candidates:")
+            logger.debug(f"📊 Top {min(3, len(valid_candidates))} candidates:")
             for i, c in enumerate(valid_candidates[:3]):
                 marker = "👑" if i == 0 else f" {i+1}."
-                logger.info(
+                logger.debug(
                     f"  {marker} Score={c.combined_score:.4f}: "
                     f"@({c.u},{c.v}) Q={c.quality:.3f} O={c.object_overlap:.2f} "
                     f"B={c.border_distance:.2f} | "

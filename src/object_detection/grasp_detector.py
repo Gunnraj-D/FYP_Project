@@ -187,10 +187,10 @@ class GraspDetector:
                 logger.warning("No valid grasp found")
                 return None
 
-            logger.info(f"Grasp detected: quality={grasp_result['quality']:.3f}, "
-                        f"angle={np.degrees(grasp_result.get('angle', 0)):.1f}°, "
-                        f"width={grasp_result.get('width_m', 0)*1000:.1f}mm, "
-                        f"overlap={grasp_result.get('object_overlap', 0):.2f}")
+            logger.debug(f"Grasp detected: quality={grasp_result['quality']:.3f}, "
+                         f"angle={np.degrees(grasp_result.get('angle', 0)):.1f}°, "
+                         f"width={grasp_result.get('width_m', 0)*1000:.1f}mm, "
+                         f"overlap={grasp_result.get('object_overlap', 0):.2f}")
 
             return grasp_result
 
