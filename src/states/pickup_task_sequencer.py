@@ -11,6 +11,7 @@ from states.context import StateContext
 from states.state_machine import StateMachine
 from states.task_sequencer import TaskSequencer
 from states.move_to_state import MoveToState
+from states.move_to_strict_state import MoveToStrictState
 from states.gripper_state import GripperControlState
 from states.grasping_state import GraspingState
 from config import PICKUP_LOCATION
@@ -62,8 +63,11 @@ class PickupTaskSequencer(TaskSequencer):
         # Get Z offset (default 8cm)
         # z_offset = getattr(self, 'z_offset', 0.2)
 
-        states.append(MoveToState(
-            context, target_location=PICKUP_LOCATION["position"]))
+        # 1. Move to pre-pickup position with face-down orientation
+        # Add zero orientation
+        initial_pose = list(PICKUP_LOCATION["position"]) + [0, 0, 0]
+        states.append(MoveToStrictState.with_face_down_enforcement(
+            context, initial_pose))
 
         # 2. Generate pickup pose using GGCNN2/GR-ConvNet
         # Pass z_offset so GraspingState can create approach pose correctly
@@ -74,32 +78,31 @@ class PickupTaskSequencer(TaskSequencer):
 
         # 4. Move to approach pose (above grasp position)
         # Z offset is applied by GraspingState when it stores the approach pose
-        # Enforce face-down orientation for approach pose
-        states.append(MoveToState(
-            context, pose_from_telemetry='generated_approach_pose',
-            enforce_face_down=True))
+        # Use MoveToStrictState with calculated orientation from grasp detection
+        states.append(MoveToStrictState(
+            context, pose_from_telemetry='generated_approach_pose'))
 
         # 5. Move to grasp pose (final grasping position)
-        # Enforce face-down orientation for grasp pose
-        states.append(MoveToState(
-            context, pose_from_telemetry='generated_grasp_pose',
-            enforce_face_down=True))
+        # Use MoveToStrictState with calculated orientation from grasp detection
+        states.append(MoveToStrictState(
+            context, pose_from_telemetry='generated_grasp_pose'))
 
         # 6. Close gripper to grasp object
         states.append(GripperControlState(context, action='close'))
 
         # 7. Move back to approach pose (lift object)
         # Apply Z offset to approach pose in telemetry (already done above, but ensuring consistency)
-        # Enforce face-down orientation for lift movement
-        states.append(MoveToState(
-            context, pose_from_telemetry='generated_approach_pose',
-            enforce_face_down=True))
+        # Use MoveToStrictState with calculated orientation from grasp detection
+        states.append(MoveToStrictState(
+            context, pose_from_telemetry='generated_approach_pose'))
 
         # 8. Return to pickup location with object
-        # Enforce face-down orientation for return movement
-        states.append(MoveToState(
-            context, target_location=PICKUP_LOCATION["position"],
-            enforce_face_down=True))
+        # Use MoveToStrictState for precise orientation control
+        # Create pose with face-down orientation for return position
+        # Add zero orientation
+        return_pose = list(PICKUP_LOCATION["position"]) + [0, 0, 0]
+        states.append(MoveToStrictState.with_face_down_enforcement(
+            context, return_pose))
 
         logger.info(
             "Created pickup sequence with {} states".format(len(states)))
@@ -110,14 +113,14 @@ class PickupTaskSequencer(TaskSequencer):
     def get_sequence_description(self) -> List[str]:
         """Get a human-readable description of the pickup sequence."""
         return [
-            "1. Move to pre-pickup position",
+            "1. Move to pre-pickup position (face-down enforced)",
             "2. Generate grasp pose using GGCNN2",
             "3. Open gripper",
-            "4. Move to approach pose (above object)",
-            "5. Move to grasp pose (grasp object)",
+            "4. Move to approach pose (calculated orientation)",
+            "5. Move to grasp pose (calculated orientation)",
             "6. Close gripper",
-            "7. Lift object to approach pose",
-            "8. Return to pickup location"
+            "7. Lift object to approach pose (calculated orientation)",
+            "8. Return to pickup location (face-down enforced)"
         ]
 
     def get_current_step(self) -> int:
