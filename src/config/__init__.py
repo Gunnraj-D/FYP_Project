@@ -69,11 +69,15 @@ from config.robot_config import (
     REST_POSES,
     COLLISION_CHECK_LINKS,
     ERROR_RECOVERY_CONFIG,
-    PATH_PLANNING_CONFIG,
     HUMAN_MODEL_CONFIG,
     TRACKED_HUMAN_JOINTS,
     ZED_MANUAL_OFFSET,
     IK_EPSILON_MARGIN_DEG
+)
+
+# Path planning configuration
+from config.path_planning import (
+    PATH_PLANNING_CONFIG
 )
 
 # Camera configuration
@@ -125,24 +129,7 @@ from config.system_config import (
 
 # Path planning configuration
 from config.path_planning import (
-    ConfigJointData,
-    ConfigSkeletonData,
-    ConfigFrameData,
-    CORE_BODY_JOINTS,
-    HEAD_JOINTS,
-    SHOULDER_JOINTS,
-    ARM_JOINTS,
-    HAND_JOINTS,
-    LEG_JOINTS,
-    FOOT_JOINTS,
-    ALL_JOINTS,
-    JOINT_STABILITY,
-    RECOMMENDED_JOINTS,
-    SAFETY_MARGINS,
-    get_joint_position,
-    get_recommended_joints,
-    get_safety_margin,
-    get_all_joint_positions
+    PATH_PLANNING_CONFIG
 )
 
 # ============================================================================
@@ -234,24 +221,7 @@ __all__ = [
     'MIN_VELOCITY_DT',
 
     # Path planning
-    'ConfigJointData',
-    'ConfigSkeletonData',
-    'ConfigFrameData',
-    'CORE_BODY_JOINTS',
-    'HEAD_JOINTS',
-    'SHOULDER_JOINTS',
-    'ARM_JOINTS',
-    'HAND_JOINTS',
-    'LEG_JOINTS',
-    'FOOT_JOINTS',
-    'ALL_JOINTS',
-    'JOINT_STABILITY',
-    'RECOMMENDED_JOINTS',
-    'SAFETY_MARGINS',
-    'get_joint_position',
-    'get_recommended_joints',
-    'get_safety_margin',
-    'get_all_joint_positions',
+    'PATH_PLANNING_CONFIG',
 ]
 
 # ============================================================================

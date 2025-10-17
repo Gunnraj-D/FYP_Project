@@ -21,6 +21,7 @@ from states.base_state import BaseState
 from states.context import StateContext
 from control.command_bus import SetJoints
 from kinematics.kinematics_solver import get_facing_down_orientation
+from hand_detection.skeleton_data_provider import SkeletonDataProvider
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,9 @@ class HandoffFallbackState(BaseState):
         self.wrist_joint_name = f'{hand_side}_WRIST'
         self.handtip_joint_name = f'{hand_side}_HANDTIP'
 
+        # Skeleton data provider
+        self.skeleton_provider = SkeletonDataProvider(context.zed_receiver)
+
         # State tracking
         self.entry_time = 0.0
         self.palm_position = None
@@ -87,12 +91,14 @@ class HandoffFallbackState(BaseState):
         logger.warning(f"Reason: {self.failure_reason}")
         logger.warning("=" * 80)
 
-        # Check if ZED receiver is available
-        if not self.context.zed_receiver:
-            logger.error(
-                "ZED receiver not available - cannot execute fallback!")
-            self._failed = True
-            return
+        # Log data source information
+        data_info = self.skeleton_provider.get_data_source_info()
+        logger.info(f"Data source: {data_info['data_source']}")
+        if data_info['use_static_data']:
+            logger.info(
+                f"Using static skeleton data with {data_info['static_joints_count']} joints")
+        else:
+            logger.info("Using live ZED skeleton data")
 
         # Capture skeleton snapshot and compute palm position
         if not self._capture_palm_position():
@@ -186,7 +192,7 @@ class HandoffFallbackState(BaseState):
         Returns:
             True if successful, False otherwise
         """
-        frame_data = self.context.zed_receiver.get_latest_frame()
+        frame_data = self.skeleton_provider.get_latest_frame()
 
         if not frame_data or not frame_data.skeletons:
             logger.error("No skeleton data available")
