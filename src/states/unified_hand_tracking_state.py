@@ -384,15 +384,41 @@ class UnifiedHandTrackingState(BaseState):
             logger.debug("Delta too small and robot slow - skipping IK send")
             return
 
-        # Solve IK to joints using existing orientation (keeps as in original code)
-        target_joints = self.context.ik.solve_XYZ(
-            final_command_pos, current_joints, get_facing_down_orientation())
-        if target_joints is not None:
+        # IMPROVED: Use position-only target with yaw freedom for robust IK
+        # This allows the IK solver to try multiple yaw angles and find the best
+        # reachable configuration, dramatically improving convergence success rate.
+        # The solver will automatically maintain facing-down orientation while
+        # searching through yaw redundancy (12 yaw samples × 5 position samples = 60 IK trials).
+        target_position = final_command_pos.tolist()  # [x, y, z] only
+
+        logger.debug(
+            f"Solving IK for position {target_position} with yaw freedom")
+
+        # Use comprehensive search with yaw freedom
+        solutions = self.context.ik.solve_with_position_and_yaw_search(
+            target_pos=target_position,
+            current_q=current_joints,
+            position_samples=5,      # Try 5 position perturbations
+            yaw_samples=12,          # Try 12 yaw angles per position
+            xy_perturbation=0.02,    # 2cm XY perturbation
+            z_perturbation=0.03,     # 3cm Z perturbation
+            max_iter=150,            # More iterations for better convergence
+            tol=1e-3
+        )
+
+        if solutions:
+            # Use the best solution (first in sorted list)
+            best_solution, quality, perturbed_pos, yaw = solutions[0]
+            target_joints = best_solution[:7]  # Take first 7 joints
+
+            logger.debug(f"Best IK solution: quality={quality:.3f}, "
+                         f"perturbed_pos={perturbed_pos}, yaw={yaw:.2f}rad")
+
             # Send the joint setpoint command through existing command pipeline
             self.context.commands.send(SetJoints(list(target_joints)))
         else:
-            logger.warning("IK solve failed for target_pos=%s",
-                           final_command_pos.tolist())
+            logger.warning("IK solve failed for target_pos=%s - no solutions found",
+                           target_position)
 
     def __estimate_robot_velocity(self, current_pos: np.ndarray, current_time: float, last_pos: Optional[np.ndarray], last_time: Optional[float]) -> np.ndarray:
         """

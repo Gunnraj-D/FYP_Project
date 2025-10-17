@@ -66,6 +66,37 @@ HAND_OCCLUSION_CONFIG = {
     'no_hand_timeout_s': 2.0,
 }
 
+# Enhanced occlusion detection parameters (multi-factor approach)
+ENHANCED_OCCLUSION_CONFIG = {
+    # Score thresholds
+    # Trigger fallback above this (0.0-1.0)
+    'occlusion_threshold': 0.60,
+    'frames_threshold': 20,               # Consecutive frames (2.0s at 10Hz)
+
+    # Hand detection presence (Weight: 0.5 max)
+    'max_lost_frames': 15,                # ~0.5 seconds at 30fps
+
+    # Landmark visibility (Weight: 0.25)
+    'min_landmark_presence': 0.5,         # Minimum presence score
+
+    # Key landmark tracking (Weight: 0.15)
+    'key_landmark_indices': [0, 4, 8, 12, 16, 20],  # Critical landmarks
+
+    # Depth quality (Weight: 0.3 total)
+    'min_depth_valid_ratio': 0.3,         # Valid pixel ratio
+    'max_depth_std_dev': 0.03,            # Depth standard deviation
+    'depth_std_normalization': (0.02, 0.05),  # (min, max) for normalization
+
+    # Temporal smoothing
+    'history_size': 30,                   # Sliding window size
+    'use_temporal_smoothing': True,       # Enable smoothing
+
+    # Adaptive Z-filtering integration
+    'use_adaptive_z_filter': True,        # Use existing Z-filter state
+    'z_filter_alpha_good': 0.5,          # Responsive when quality good
+    'z_filter_alpha_poor': 0.15,         # Smooth when quality poor
+}
+
 # Legacy parameters (kept for backward compatibility, consider deprecated)
 HAND_OCCLUSION_THRESHOLD = 0.5  # Threshold for detecting hand occlusion
 # Number of consecutive frames for occlusion detection

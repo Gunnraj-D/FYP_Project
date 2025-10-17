@@ -694,6 +694,47 @@ class HandTracker:
             'hand_position': hand_position
         }
 
+    def get_enhanced_occlusion_data(self):
+        """
+        Get enhanced data for multi-factor occlusion detection.
+
+        Returns:
+            dict with keys:
+                - hand_landmarks: List of MediaPipe landmarks with presence field
+                - depth_quality: Dict with 'valid_ratio' and 'depth_std_m'
+                - confidence: float (0-1) or None
+                - landmark_count: int (0-21) or None
+                - hand_position: list [x, y, z] from telemetry
+                - z_filter_quality: bool indicating Z-filter quality state
+        """
+        hand_position = self.telemetry.get_camera_vector()
+
+        # Get hand landmarks with presence information
+        hand_landmarks = None
+        if (self.latest_result and
+            self.latest_result.hand_landmarks and
+                len(self.latest_result.hand_landmarks) > 0):
+            hand_landmarks = self.latest_result.hand_landmarks[0]
+
+        # Get depth quality information
+        depth_quality = None
+        if hasattr(self, '_adaptive_z_filter') and hasattr(self._adaptive_z_filter, 'quality_prev'):
+            depth_quality = self._adaptive_z_filter.quality_prev
+
+        # Get Z-filter quality state
+        z_filter_quality = None
+        if hasattr(self, '_adaptive_z_filter') and hasattr(self._adaptive_z_filter, 'quality_is_good'):
+            z_filter_quality = self._adaptive_z_filter.quality_is_good
+
+        return {
+            'hand_landmarks': hand_landmarks,
+            'depth_quality': depth_quality,
+            'confidence': self.latest_confidence,
+            'landmark_count': self.latest_landmark_count,
+            'hand_position': hand_position,
+            'z_filter_quality': z_filter_quality
+        }
+
     def set_occlusion_status(self, status_text, status_color, time_in_state=0.0):
         """
         Set occlusion status information for display.

@@ -249,19 +249,35 @@ class HandoffFallbackState(BaseState):
             logger.error("Cannot get current joint configuration")
             return False
 
-        # Solve IK for target position with facing-down orientation
-        target_joints = self.context.ik.solve_XYZ(
+        # IMPROVED: Use position-only target with yaw freedom for robust IK
+        # This allows the IK solver to try multiple yaw angles and find the best
+        # reachable configuration, dramatically improving convergence success rate.
+        logger.debug(
+            f"Solving IK for fallback position {self.target_position} with yaw freedom")
+
+        # Use comprehensive search with yaw freedom
+        solutions = self.context.ik.solve_with_position_and_yaw_search(
             target_pos=self.target_position,
             current_q=current_joints,
-            orientation=get_facing_down_orientation()
+            position_samples=5,      # Try 5 position perturbations
+            yaw_samples=12,          # Try 12 yaw angles per position
+            xy_perturbation=0.02,    # 2cm XY perturbation
+            z_perturbation=0.03,     # 3cm Z perturbation
+            max_iter=150,            # More iterations for better convergence
+            tol=1e-3
         )
 
-        if target_joints is None:
-            logger.error(
-                f"IK solver failed for target position {self.target_position}")
-            return False
+        if solutions:
+            # Use the best solution (first in sorted list)
+            best_solution, quality, perturbed_pos, yaw = solutions[0]
+            self.target_joints = list(best_solution[:7])  # Take first 7 joints
 
-        self.target_joints = list(target_joints)
+            logger.debug(f"Best fallback IK solution: quality={quality:.3f}, "
+                         f"perturbed_pos={perturbed_pos}, yaw={yaw:.2f}rad")
+        else:
+            logger.error(
+                f"IK solver failed for target position {self.target_position} - no solutions found")
+            return False
         logger.info(f"IK solution: {self.target_joints}")
         return True
 
