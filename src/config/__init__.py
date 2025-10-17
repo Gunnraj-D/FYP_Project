@@ -123,6 +123,28 @@ from config.system_config import (
     MIN_VELOCITY_DT
 )
 
+# Path planning configuration
+from config.path_planning import (
+    ConfigJointData,
+    ConfigSkeletonData,
+    ConfigFrameData,
+    CORE_BODY_JOINTS,
+    HEAD_JOINTS,
+    SHOULDER_JOINTS,
+    ARM_JOINTS,
+    HAND_JOINTS,
+    LEG_JOINTS,
+    FOOT_JOINTS,
+    ALL_JOINTS,
+    JOINT_STABILITY,
+    RECOMMENDED_JOINTS,
+    SAFETY_MARGINS,
+    get_joint_position,
+    get_recommended_joints,
+    get_safety_margin,
+    get_all_joint_positions
+)
+
 # ============================================================================
 # EXPORT ALL (for "from config import *")
 # ============================================================================
@@ -210,6 +232,26 @@ __all__ = [
     'DEAD_ZONE_EXIT_M',
     'STABLE_VELOCITY_THRESHOLD',
     'MIN_VELOCITY_DT',
+
+    # Path planning
+    'ConfigJointData',
+    'ConfigSkeletonData',
+    'ConfigFrameData',
+    'CORE_BODY_JOINTS',
+    'HEAD_JOINTS',
+    'SHOULDER_JOINTS',
+    'ARM_JOINTS',
+    'HAND_JOINTS',
+    'LEG_JOINTS',
+    'FOOT_JOINTS',
+    'ALL_JOINTS',
+    'JOINT_STABILITY',
+    'RECOMMENDED_JOINTS',
+    'SAFETY_MARGINS',
+    'get_joint_position',
+    'get_recommended_joints',
+    'get_safety_margin',
+    'get_all_joint_positions',
 ]
 
 # ============================================================================

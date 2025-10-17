@@ -32,6 +32,7 @@ Usage:
     receiver.start()
 """
 
+from config import ZED_MANUAL_OFFSET
 import socket
 import json
 import threading
@@ -42,7 +43,6 @@ import time
 
 logger = logging.getLogger(__name__)
 
-from config import ZED_MANUAL_OFFSET
 
 @dataclass
 class JointData:
@@ -331,13 +331,29 @@ class ZEDJointReceiver:
             logger.error(f"Error processing frame: {e}")
 
     def _convert_to_frame_data(self, raw_data: Dict[str, Any]) -> FrameData:
-        """Convert raw JSON dict to FrameData object."""
+        """
+        Convert raw JSON dict to FrameData object with gap-filling.
+
+        This method ensures all skeletons always have complete joint data by:
+        1. Updating smoothed positions for detected joints
+        2. Using last known smoothed positions for missing joints (gap-filling)
+        3. Maintaining tracking loss tolerance for entire skeletons
+        """
         frame = raw_data.get('frame', 0)
         skeletons = []
 
+        # Track which skeletons were detected in this frame
+        detected_skeleton_ids = set()
+
         for raw_skeleton in raw_data.get('skeletons', []):
             skeleton_id = raw_skeleton.get('skeletonID', 0)
-            joints = []
+            detected_skeleton_ids.add(skeleton_id)
+
+            # Mark skeleton as detected this frame
+            self.frames_since_detection[skeleton_id] = 0
+
+            # Track which joints were detected in this raw frame
+            detected_joints = {}
 
             for raw_joint in raw_skeleton.get('joints', []):
                 # Get raw coordinates from Unity
@@ -359,7 +375,6 @@ class ZEDJointReceiver:
                 y_out = -y_out
 
                 # Apply manual calibration offset AFTER coordinate transforms
-                
                 x_out += ZED_MANUAL_OFFSET.get('x', 0.0)
                 y_out += ZED_MANUAL_OFFSET.get('y', 0.0)
                 z_out += ZED_MANUAL_OFFSET.get('z', 0.0)
@@ -370,32 +385,48 @@ class ZEDJointReceiver:
                     skeleton_id, joint_name, x_out, y_out, z_out
                 )
 
-                joint = JointData(
-                    joint_name=joint_name,
-                    x=x_smooth,
-                    y=y_smooth,  # Y-axis negated before offset/smoothing
-                    z=z_smooth
-                )
-                joints.append(joint)
+                detected_joints[joint_name] = [x_smooth, y_smooth, z_smooth]
 
-            # Mark skeleton as detected this frame
-            self.frames_since_detection[skeleton_id] = 0
+            # Build complete joint list: detected joints + gap-filled missing joints
+            joints = []
+
+            # First, add all detected joints
+            for joint_name, pos in detected_joints.items():
+                joints.append(JointData(
+                    joint_name=joint_name,
+                    x=pos[0],
+                    y=pos[1],
+                    z=pos[2]
+                ))
+
+            # Gap-filling: Add missing joints from smoothed history
+            if skeleton_id in self.smoothed_positions:
+                for joint_name, pos in self.smoothed_positions[skeleton_id].items():
+                    if joint_name not in detected_joints:
+                        # Joint missing in current frame - use last smoothed position
+                        joints.append(JointData(
+                            joint_name=joint_name,
+                            x=pos[0],
+                            y=pos[1],
+                            z=pos[2]
+                        ))
+                        logger.debug(
+                            f"Gap-filled {joint_name} for skeleton {skeleton_id}")
 
             skeleton = SkeletonData(skeleton_id=skeleton_id, joints=joints)
             skeletons.append(skeleton)
 
         # Handle tracking loss tolerance - add skeletons with last known positions
-        detected_ids = {s.skeleton_id for s in skeletons}
         for skeleton_id in list(self.frames_since_detection.keys()):
-            if skeleton_id not in detected_ids:
+            if skeleton_id not in detected_skeleton_ids:
                 self.frames_since_detection[skeleton_id] += 1
 
                 # If within tolerance, use last smoothed positions
                 if self.frames_since_detection[skeleton_id] <= self.tracking_loss_frames:
                     if skeleton_id in self.smoothed_positions:
                         logger.debug(
-                            f"Skeleton {skeleton_id} lost for {self.frames_since_detection[skeleton_id]} frames - using smoothed position")
-                        # Create skeleton from smoothed positions
+                            f"Skeleton {skeleton_id} lost for {self.frames_since_detection[skeleton_id]} frames - using smoothed positions")
+                        # Create skeleton from all smoothed positions
                         joints = []
                         for joint_name, pos in self.smoothed_positions[skeleton_id].items():
                             joints.append(JointData(
