@@ -179,9 +179,11 @@ class HumanHandoffApproachState(BaseState):
                 self._plan_trajectory_to_target(is_initial=False)
                 return
             else:
-                # Target hasn't moved much - we're close enough, complete
-                logger.info("Trajectory complete, target stable - completing")
-                self._complete_motion()
+                # Target hasn't moved much - but we haven't reached it yet, so replan
+                current_tcp = self._get_current_tcp_position()
+                distance = np.linalg.norm(current_tcp - self.current_target_position) if self.current_target_position is not None else float('inf')
+                logger.info(f"Trajectory complete, target stable but not reached (distance: {distance:.3f}m) - replanning")
+                self._plan_trajectory_to_target(is_initial=False)
                 return
 
         # 5. Validate current trajectory segment is still safe
