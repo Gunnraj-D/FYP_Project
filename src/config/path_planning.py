@@ -25,6 +25,24 @@ PATH_PLANNING_CONFIG = {
     # Post-processing smoothing passes (reduced from 20 for safety)
     'smoothing_iterations': 10,
 
+    # ========================================================================
+    # IK SOLVER CONFIGURATION (NEW - for robust convergence)
+    # ========================================================================
+    # Number of yaw angles to sample (exploits redundancy in 7-DOF arm)
+    # Higher = better IK success, but slower. Range: 8-16
+    'ik_yaw_samples': 12,
+    # Number of position perturbations to try per goal
+    # Slightly perturbs target position to find reachable alternatives
+    'ik_position_samples': 5,
+    # XY perturbation range (meters) - typically ±20mm is safe
+    'ik_xy_perturbation': 0.02,
+    # Z perturbation range (meters) - typically ±30mm for vertical tolerance
+    'ik_z_perturbation': 0.03,
+    # Maximum IK iterations per attempt (higher = more robust, slower)
+    'ik_max_iterations': 200,
+    # IK convergence tolerance (meters) - 1mm is good balance
+    'ik_tolerance': 1e-3,
+
     # Rolling horizon
     'horizon_time': 0.5,               # Plan ahead time (seconds)
     # Minimum time between replans (seconds) - INCREASED to reduce jitter

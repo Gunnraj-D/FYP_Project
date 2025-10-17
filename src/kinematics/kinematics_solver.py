@@ -10,6 +10,7 @@ from scipy.spatial.transform import Rotation as R
 from typing import List, Optional, Tuple
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -373,6 +374,197 @@ class InverseKinematicsSolver:
             rot = get_facing_down_orientation()
 
         return self.solve_XYZ(target_pos, current_q, target_rot=rot, max_iter=max_iter)
+
+    def compute_configuration_quality(self, q7: np.ndarray) -> float:
+        """
+        Compute quality score for a joint configuration.
+        Higher score = better configuration (farther from limits, better posture).
+
+        Args:
+            q7: 7-element joint angle array
+
+        Returns:
+            Quality score (0-1, higher is better)
+        """
+        if len(q7) != 7:
+            return 0.0
+
+        scores = []
+
+        # Score 1: Distance from joint limits (normalized)
+        for i in range(7):
+            joint_name = self.revolute_joint_names[i] if i < len(
+                self.revolute_joint_names) else f'joint_a{i+1}'
+            limits = self.arm_joint_limits.get(joint_name, {
+                'min': -np.pi,
+                'max': np.pi,
+                'range': 2*np.pi
+            })
+
+            # Normalize angle to [0, 1] range within limits
+            normalized = (q7[i] - limits['min']) / limits['range']
+            # Distance from closest limit (0.5 = centered, 0 or 1 = at limit)
+            limit_distance = 1.0 - 2.0 * abs(normalized - 0.5)
+            scores.append(limit_distance)
+
+        # Score 2: Penalize extreme joint 2 angles (elbow down = bad for table collision)
+        # Joint A2 (index 1): prefer values around -0.5 to -1.5 (elbow up)
+        if len(self.revolute_joint_names) > 1:
+            a2_angle = q7[1]
+            # Optimal range: -1.5 to -0.5 radians (elbow raised)
+            if -1.5 <= a2_angle <= -0.5:
+                elbow_score = 1.0
+            elif -2.0 <= a2_angle < -1.5:
+                elbow_score = 0.7
+            elif -0.5 < a2_angle <= 0.0:
+                elbow_score = 0.7
+            else:
+                # Positive A2 or very negative A2 = elbow pointing down (bad)
+                elbow_score = 0.3
+            scores.append(elbow_score * 1.5)  # Weight this score higher
+
+        # Score 3: Prefer moderate joint velocities (smooth configurations)
+        joint_velocity_penalty = np.sum(np.abs(q7)) / (7.0 * np.pi)
+        smoothness_score = max(0.0, 1.0 - joint_velocity_penalty)
+        scores.append(smoothness_score)
+
+        # Weighted average
+        quality = np.mean(scores)
+        return np.clip(quality, 0.0, 1.0)
+
+    def solve_with_yaw_search(self, target_pos: List[float], current_q: List[float],
+                              n_yaw_samples: int = 12, max_iter: int = 150,
+                              tol: float = 1e-3) -> List[Tuple[np.ndarray, float, float]]:
+        """
+        Search for IK solutions across multiple yaw angles.
+        Exploits redundancy in 7-DOF arm for 6-DOF task (position + facing down).
+
+        Args:
+            target_pos: [x, y, z] target position
+            current_q: Current joint angles (seed)
+            n_yaw_samples: Number of yaw angles to sample
+            max_iter: Max IK iterations per sample
+            tol: Position tolerance
+
+        Returns:
+            List of (solution, quality_score, yaw_angle) tuples, sorted by quality (best first)
+        """
+        logger.info(
+            f"Searching IK solutions with {n_yaw_samples} yaw samples for target {target_pos}")
+
+        solutions = []
+
+        # Sample yaw angles uniformly over 180 degrees
+        # (180-360 is symmetric for most grasping tasks)
+        yaw_angles = np.linspace(0, np.pi, n_yaw_samples, endpoint=False)
+
+        for i, yaw in enumerate(yaw_angles):
+            try:
+                # Solve IK with this yaw angle
+                rot = get_facing_down_with_yaw_freedom(yaw)
+                q_solution = self.solve_XYZ(
+                    target_pos=target_pos,
+                    current_q=current_q,
+                    target_rot=rot,
+                    max_iter=max_iter,
+                    tol=tol
+                )
+
+                # Verify convergence
+                T_achieved, _ = self.tcp_from_joints(q_solution.tolist())
+                achieved_pos = T_achieved[:3, 3]
+                pos_error = np.linalg.norm(achieved_pos - np.array(target_pos))
+
+                if pos_error <= tol * 2.0:  # Allow 2x tolerance for acceptance
+                    # Compute quality score
+                    quality = self.compute_configuration_quality(q_solution)
+                    solutions.append((q_solution, quality, yaw))
+                    logger.debug(
+                        f"  Yaw {np.rad2deg(yaw):.1f}°: solution found (quality={quality:.3f}, error={pos_error*1000:.2f}mm)")
+                else:
+                    logger.debug(
+                        f"  Yaw {np.rad2deg(yaw):.1f}°: failed convergence (error={pos_error*1000:.2f}mm)")
+
+            except Exception as e:
+                logger.debug(f"  Yaw {np.rad2deg(yaw):.1f}°: IK failed ({e})")
+                continue
+
+        # Sort by quality score (highest first)
+        solutions.sort(key=lambda x: x[1], reverse=True)
+
+        logger.info(
+            f"Found {len(solutions)}/{n_yaw_samples} valid IK solutions")
+        if solutions:
+            best_quality = solutions[0][1]
+            best_yaw = np.rad2deg(solutions[0][2])
+            logger.info(
+                f"Best solution: quality={best_quality:.3f}, yaw={best_yaw:.1f}°")
+
+        return solutions
+
+    def solve_with_position_and_yaw_search(
+        self, target_pos: List[float], current_q: List[float],
+        position_samples: int = 5, yaw_samples: int = 12,
+        xy_perturbation: float = 0.02, z_perturbation: float = 0.03,
+        max_iter: int = 150, tol: float = 1e-3
+    ) -> List[Tuple[np.ndarray, float, np.ndarray, float]]:
+        """
+        Comprehensive IK search: sample both position perturbations AND yaw angles.
+
+        Args:
+            target_pos: [x, y, z] nominal target position
+            current_q: Current joint angles
+            position_samples: Number of position perturbations to try
+            yaw_samples: Number of yaw angles per position
+            xy_perturbation: Max XY perturbation (meters)
+            z_perturbation: Max Z perturbation (meters)
+            max_iter: Max IK iterations
+            tol: Position tolerance
+
+        Returns:
+            List of (solution, quality, perturbed_pos, yaw) tuples, sorted by quality
+        """
+        logger.info(
+            f"Comprehensive IK search: {position_samples} positions × {yaw_samples} yaws = {position_samples * yaw_samples} total samples")
+
+        all_solutions = []
+
+        # Generate position samples
+        position_perturbations = []
+        position_perturbations.append(
+            np.array(target_pos))  # Original position first
+
+        # Random perturbations
+        np.random.seed(int(time.time() * 1000) % (2**32))
+        for _ in range(position_samples - 1):
+            perturbed = np.array(target_pos) + np.array([
+                np.random.uniform(-xy_perturbation, xy_perturbation),
+                np.random.uniform(-xy_perturbation, xy_perturbation),
+                np.random.uniform(-z_perturbation, z_perturbation)
+            ])
+            position_perturbations.append(perturbed)
+
+        # Try each position with yaw search
+        for pos_idx, perturbed_pos in enumerate(position_perturbations):
+            yaw_solutions = self.solve_with_yaw_search(
+                target_pos=perturbed_pos.tolist(),
+                current_q=current_q,
+                n_yaw_samples=yaw_samples,
+                max_iter=max_iter,
+                tol=tol
+            )
+
+            # Add position info to solutions
+            for solution, quality, yaw in yaw_solutions:
+                all_solutions.append((solution, quality, perturbed_pos, yaw))
+
+        # Sort by quality
+        all_solutions.sort(key=lambda x: x[1], reverse=True)
+
+        logger.info(
+            f"Total valid solutions: {len(all_solutions)}/{position_samples * yaw_samples}")
+
+        return all_solutions
 
     def solve_path_with_relaxation(self, start_pos: List[float], end_pos: List[float],
                                    current_q: List[float], min_z: float = 0.0,

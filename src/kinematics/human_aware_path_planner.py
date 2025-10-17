@@ -435,50 +435,121 @@ class HumanAwarePathPlanner:
         logger.info(f"Human model updated: {num_bodies} collision bodies")
 
     def _sample_goal_configurations(self, goal_pose: List[float],
-                                    n_samples: int = 3) -> List[List[float]]:
-        """Sample goal configurations - FIXED LENGTH HANDLING."""
+                                    max_configs: int = 30) -> List[List[float]]:
+        """
+        Sample goal configurations using multi-yaw and position search.
+        IMPROVED: Searches yaw redundancy + position perturbations for robust IK.
+
+        Args:
+            goal_pose: Target pose [x,y,z] or [x,y,z,rx,ry,rz]
+            max_configs: Maximum number of configurations to return
+
+        Returns:
+            List of valid joint configurations, sorted by quality (best first)
+        """
         goal_configs = []
         n_plan_joints = len(self.planning_joints)
 
-        # Original goal
+        # Get configuration from path planning config
+        n_yaw_samples = self.config.get('ik_yaw_samples', 12)
+        n_position_samples = self.config.get('ik_position_samples', 5)
+        xy_perturb = self.config.get('ik_xy_perturbation', 0.02)
+        z_perturb = self.config.get('ik_z_perturbation', 0.03)
+        max_iter = self.config.get('ik_max_iterations', 200)
+
+        # Get current joint state as seed (use zeros if not available)
+        try:
+            current_joints = [p.getJointState(self.robot_id, j, physicsClientId=self.client)[0]
+                              for j in self.planning_joints]
+        except:
+            current_joints = [0.0] * 7
+
+        logger.info(
+            f"Sampling IK solutions: {n_position_samples} positions × {n_yaw_samples} yaws = {n_position_samples * n_yaw_samples} trials")
+
+        # Handle position-only vs full pose
         if len(goal_pose) == 3:
-            base_solution = self.ik_solver.solve_XYZ(
-                target_pos=goal_pose,
-                current_q=[0]*7
+            # Position only - use comprehensive search with yaw freedom
+            target_pos = goal_pose
+
+            solutions = self.ik_solver.solve_with_position_and_yaw_search(
+                target_pos=target_pos,
+                current_q=current_joints,
+                position_samples=n_position_samples,
+                yaw_samples=n_yaw_samples,
+                xy_perturbation=xy_perturb,
+                z_perturbation=z_perturb,
+                max_iter=max_iter,
+                tol=1e-3
             )
+
+            # Extract joint configurations (truncate to planning DOF)
+            for solution, quality, perturbed_pos, yaw in solutions[:max_configs]:
+                config = solution[:n_plan_joints].tolist()
+                goal_configs.append(config)
+
+                # Log best few solutions
+                if len(goal_configs) <= 3:
+                    logger.info(
+                        f"  Solution {len(goal_configs)}: quality={quality:.3f}, "
+                        f"yaw={np.rad2deg(yaw):.1f}°, "
+                        f"pos_offset=[{perturbed_pos[0]-target_pos[0]:.3f}, "
+                        f"{perturbed_pos[1]-target_pos[1]:.3f}, "
+                        f"{perturbed_pos[2]-target_pos[2]:.3f}]m"
+                    )
+
         else:
-            base_solution = self.ik_solver.solve_pose(
-                target_pose=goal_pose,
-                current_q=[0]*7
-            )
+            # Full pose with orientation constraint - less freedom, but still try perturbations
+            logger.warning(
+                "Full 6-DOF pose provided - limited yaw freedom. Consider using position-only targets for better IK success.")
 
-        if base_solution is not None:
-            # FIXED: Truncate to planning DOF
-            goal_configs.append(base_solution[:n_plan_joints].tolist())
-
-        # Perturbed goals
-        for i in range(n_samples - 1):
-            perturbed_pose = goal_pose.copy()
-            perturbed_pose[0] += np.random.uniform(-0.02, 0.02)
-            perturbed_pose[1] += np.random.uniform(-0.02, 0.02)
-            perturbed_pose[2] += np.random.uniform(-0.02, 0.02)
-
-            if len(goal_pose) == 3:
-                solution = self.ik_solver.solve_XYZ(
-                    target_pos=perturbed_pose,
-                    current_q=[0]*7
+            # Try original pose
+            try:
+                base_solution = self.ik_solver.solve_pose(
+                    target_pose=goal_pose,
+                    current_q=current_joints,
+                    max_iter=max_iter
                 )
-            else:
-                solution = self.ik_solver.solve_pose(
-                    target_pose=perturbed_pose,
-                    current_q=[0]*7
-                )
+                if base_solution is not None:
+                    quality = self.ik_solver.compute_configuration_quality(
+                        base_solution)
+                    goal_configs.append(
+                        (base_solution[:n_plan_joints].tolist(), quality))
+            except Exception as e:
+                logger.debug(f"Base pose IK failed: {e}")
 
-            if solution is not None:
-                # FIXED: Truncate here too
-                goal_configs.append(solution[:n_plan_joints].tolist())
+            # Try position perturbations with same orientation
+            for i in range(n_position_samples - 1):
+                perturbed_pose = goal_pose.copy()
+                perturbed_pose[0] += np.random.uniform(-xy_perturb, xy_perturb)
+                perturbed_pose[1] += np.random.uniform(-xy_perturb, xy_perturb)
+                perturbed_pose[2] += np.random.uniform(-z_perturb, z_perturb)
 
-        logger.info(f"Sampled {len(goal_configs)} goal configurations")
+                try:
+                    solution = self.ik_solver.solve_pose(
+                        target_pose=perturbed_pose,
+                        current_q=current_joints,
+                        max_iter=max_iter
+                    )
+                    if solution is not None:
+                        quality = self.ik_solver.compute_configuration_quality(
+                            solution)
+                        goal_configs.append(
+                            (solution[:n_plan_joints].tolist(), quality))
+                except Exception as e:
+                    logger.debug(f"Perturbed pose IK failed: {e}")
+
+            # Sort by quality and extract configs
+            goal_configs.sort(key=lambda x: x[1], reverse=True)
+            goal_configs = [cfg for cfg, _ in goal_configs[:max_configs]]
+
+        logger.info(
+            f"✓ Generated {len(goal_configs)} valid goal configurations")
+
+        if len(goal_configs) == 0:
+            logger.error(
+                "❌ NO VALID IK SOLUTIONS FOUND! Target may be unreachable.")
+
         return goal_configs
 
     def _rrt_connect_plan(self, start: List[float],

@@ -36,7 +36,7 @@ class HumanHandoffApproachState(BaseState):
     """
 
     def __init__(self, context: StateContext,
-                 approach_offset: List[float] = [0.0, 0.0, 0.30],
+                 approach_offset: List[float] = [0.0, 0.0, 0.15],
                  position_threshold: float = 0.05,
                  hand_joint_name: str = 'RIGHT_WRIST'):
         """
@@ -364,35 +364,21 @@ class HumanHandoffApproachState(BaseState):
         # Get current robot state
         current_joints = self.context.telemetry.get_current_joints()
 
-        # Get current TCP orientation to extract Z-rotation
-        from kinematics.kinematics_solver import get_facing_down_with_yaw_freedom
-        from scipy.spatial.transform import Rotation as R
-
-        # Get current TCP pose using IK solver
-        _, current_tcp_pose = self.context.ik.tcp_from_joints(current_joints)
-        current_orientation = R.from_euler('xyz', current_tcp_pose[3:])
-
-        # Extract current Z-rotation (yaw) to maintain it
-        # This prevents unnecessary spinning around the tool axis
-        current_euler = current_orientation.as_euler('xyz')
-        current_z_rotation = current_euler[2]  # Yaw angle
+        # IMPROVED: Use position-only target to exploit multi-yaw IK search
+        # This allows the IK solver to try multiple yaw angles and find the best
+        # reachable configuration, dramatically improving convergence success rate.
+        # The solver will automatically maintain facing-down orientation while
+        # searching through yaw redundancy (12 yaw samples × 5 position samples = 60 IK trials).
+        target_position = list(self.current_target_position)  # [x, y, z] only
 
         logger.debug(
-            f"Maintaining current Z-rotation: {np.degrees(current_z_rotation):.1f}°")
+            f"Planning to position {target_position} with yaw freedom for robust IK")
 
-        # Create facing-down orientation with current Z-rotation preserved
-        target_orientation = get_facing_down_with_yaw_freedom(
-            current_z_rotation)
-
-        # Convert to pose format
-        euler = R.from_matrix(target_orientation).as_euler('xyz')
-        target_pose = list(self.current_target_position) + list(euler)
-
-        # Call planner
+        # Call planner with position-only target
         try:
             self.trajectory, self.trajectory_metadata = self.planner.plan_trajectory(
                 start_joints=current_joints,
-                goal_pose=target_pose,
+                goal_pose=target_position,  # 3-DOF position only - exploits yaw redundancy!
                 use_pre_approach=False  # Already at approach height
             )
 

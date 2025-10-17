@@ -363,12 +363,12 @@ class DebugSystemManager:
             ) if self.zed_receiver else None,
             9: HumanHandoffApproachState(
                 context=self.context,
-                approach_offset=[0.0, 0.0, 0.30],  # 30cm above right hand
+                approach_offset=[0.0, 0.0, 0.15],  # 15cm above right hand
                 hand_joint_name='RIGHT_WRIST'
             ) if self.zed_receiver else None,
             10: HumanHandoffApproachState(
                 context=self.context,
-                approach_offset=[0.0, 0.0, 0.30],
+                approach_offset=[0.0, 0.0, 0.15],
                 hand_joint_name='LEFT_WRIST'  # Left hand variant
             ) if self.zed_receiver else None,
         }
@@ -696,7 +696,7 @@ class DebugSystemManager:
                     return
                 state = HumanHandoffApproachState(
                     context=self.context,
-                    approach_offset=[0.0, 0.0, 0.30],
+                    approach_offset=[0.0, 0.0, 0.15],
                     hand_joint_name='RIGHT_WRIST'
                 )
             elif state_num == 10:
@@ -705,7 +705,7 @@ class DebugSystemManager:
                     return
                 state = HumanHandoffApproachState(
                     context=self.context,
-                    approach_offset=[0.0, 0.0, 0.30],
+                    approach_offset=[0.0, 0.0, 0.15],
                     hand_joint_name='LEFT_WRIST'
                 )
             elif state_num == 11:
