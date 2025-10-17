@@ -12,12 +12,17 @@ logger = logging.getLogger(__name__)
 class MoveToState(BaseState):
     """Move To State - Moves robot to defined state, then completes."""
 
-    def __init__(self, context: StateContext, target_location=None, pose_from_telemetry=None):
+    def __init__(self, context: StateContext, target_location=None, pose_from_telemetry=None,
+                 target_orientation=None, enforce_face_down=False):
         super().__init__(context=context)
         # mm in base frame (legacy support)
         self.target_location = target_location
         # Key to retrieve pose from telemetry
         self.pose_from_telemetry = pose_from_telemetry
+        # Custom orientation (3x3 rotation matrix or None for default)
+        self.target_orientation = target_orientation
+        # Whether to enforce face-down orientation regardless of other settings
+        self.enforce_face_down = enforce_face_down
         self.started_motion = False
         self.target_joint_angles = None  # computed on enter/first execute
         self._log_counter = 0  # For reducing log frequency
@@ -49,6 +54,10 @@ class MoveToState(BaseState):
                     f"Using target orientation from telemetry: RPY=[{np.degrees(target_rpy[0]):.1f}°, {np.degrees(target_rpy[1]):.1f}°, {np.degrees(target_rpy[2]):.1f}°]")
         else:
             target_location = self.target_location
+            # Use custom orientation if provided
+            if self.target_orientation is not None:
+                target_orientation = self.target_orientation
+                logger.info("Using custom target orientation")
 
         if target_location is None:
             logger.error("No target location specified")
@@ -69,8 +78,11 @@ class MoveToState(BaseState):
         logger.info(
             f"Current joints shape: {current_joints.shape if hasattr(current_joints, 'shape') else 'No shape'}")
 
-        # Use target orientation from telemetry if available, otherwise default to facing down
-        if target_orientation is None:
+        # Handle orientation selection with face-down enforcement
+        if self.enforce_face_down:
+            target_orientation = get_facing_down_orientation()
+            logger.info("🔒 Enforcing face-down orientation (override enabled)")
+        elif target_orientation is None:
             target_orientation = get_facing_down_orientation()
             logger.info("Using default facing-down orientation")
 
@@ -114,6 +126,40 @@ class MoveToState(BaseState):
             logger.error(
                 f"Unknown telemetry pose key: {self.pose_from_telemetry}")
             return None
+
+    @classmethod
+    def with_custom_orientation(cls, context: StateContext, target_location,
+                                target_orientation, enforce_face_down=False):
+        """
+        Factory method to create MoveToState with custom orientation.
+
+        Args:
+            context: State context
+            target_location: Target position [x, y, z]
+            target_orientation: 3x3 rotation matrix or None for default
+            enforce_face_down: Whether to override with face-down orientation
+
+        Returns:
+            MoveToState instance
+        """
+        return cls(context, target_location=target_location,
+                   target_orientation=target_orientation,
+                   enforce_face_down=enforce_face_down)
+
+    @classmethod
+    def with_face_down_enforcement(cls, context: StateContext, target_location):
+        """
+        Factory method to create MoveToState with face-down orientation enforced.
+
+        Args:
+            context: State context
+            target_location: Target position [x, y, z]
+
+        Returns:
+            MoveToState instance with face-down orientation enforced
+        """
+        return cls(context, target_location=target_location,
+                   enforce_face_down=True)
 
     def exit(self):
         logger.info("Exiting MOVE_TO state")

@@ -33,7 +33,8 @@ SIMPLE_GRASP_CONFIG = {
     # Higher overlap = fewer bad grasps but harder to find grasps
     # Lower overlap = more grasps found but some may be unstable
     # Guidelines: Flat objects (0.3-0.4), Cylindrical (0.25-0.3), Small (0.2-0.25)
-    'min_object_overlap': 0.25,          # Overlap with object mask [0-1]
+    # Overlap with object mask [0-1] - INCREASED for edge reduction
+    'min_object_overlap': 0.75,
     'avoid_borders': True,               # Penalize grasps near image borders
 
     # Temporal filtering (reduce jitter)
@@ -133,7 +134,7 @@ GRASP_DETECTION_CONFIG = {
     # Minimum overlap between grasp rectangle and detected object
     # Prevents tip grasps by requiring contact with object body
     # Guidelines: Flat (0.3-0.4), Cylindrical (0.25-0.3), Small (0.2-0.25)
-    'min_overlap': 0.60,  # INCREASED: Force center grasps, prevent edge bias
+    'min_overlap': 0.75,  # INCREASED: Force center grasps, prevent edge bias
 
     # FOREGROUND MASK SEGMENTATION 🔍
     # Parameters for depth-based object/background segmentation
@@ -173,11 +174,11 @@ GRASP_DETECTION_CONFIG = {
     # Higher weight = more important factor
     'scoring_weights': {
         'q': 1.0,   # Quality (baseline importance)
-        'o': 1.5,   # Overlap (STRONG emphasis for anti-tip)
+        'o': 2.0,   # Overlap (VERY STRONG emphasis for anti-tip)
         'b': 0.5,   # Border (less critical if other factors good)
         'w': 0.7,   # Width preference (optimal range)
         't': 0.0,   # Temporal consistency (DISABLED for now)
-        'c': 2.0    # Center distance (STRONG bias toward center grasps)
+        'c': 3.0    # Center distance (VERY STRONG bias toward center grasps)
     },
 }
 

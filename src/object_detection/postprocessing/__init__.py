@@ -558,8 +558,8 @@ class GraspPostprocessor:
 
         # Overlap constraint (stricter if far from center)
         min_overlap_required = self.min_overlap
-        if center_dist < 0.5:  # Edge grasp
-            min_overlap_required *= 1.5  # INCREASED: Require 50% more overlap at edges
+        if center_dist < 0.6:  # Edge grasp - INCREASED threshold
+            min_overlap_required *= 1.8  # INCREASED: Require 80% more overlap at edges
         if overlap < min_overlap_required:
             return False, f"Low overlap ({overlap:.2f} < {min_overlap_required:.2f})"
 
@@ -568,8 +568,8 @@ class GraspPostprocessor:
         if border_dist < border_thr:
             return False, f"Too close to border ({border_dist:.2f})"
 
-        # STRICT center preference - reject edge grasps
-        if center_dist < 0.4:  # INCREASED: More strict about center preference
+        # VERY STRICT center preference - reject edge grasps
+        if center_dist < 0.6:  # INCREASED: Much more strict about center preference
             return False, f"Too far from center ({center_dist:.2f})"
 
         # All constraints passed

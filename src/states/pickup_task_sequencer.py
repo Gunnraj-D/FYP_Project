@@ -74,24 +74,32 @@ class PickupTaskSequencer(TaskSequencer):
 
         # 4. Move to approach pose (above grasp position)
         # Z offset is applied by GraspingState when it stores the approach pose
+        # Enforce face-down orientation for approach pose
         states.append(MoveToState(
-            context, pose_from_telemetry='generated_approach_pose'))
+            context, pose_from_telemetry='generated_approach_pose',
+            enforce_face_down=True))
 
         # 5. Move to grasp pose (final grasping position)
+        # Enforce face-down orientation for grasp pose
         states.append(MoveToState(
-            context, pose_from_telemetry='generated_grasp_pose'))
+            context, pose_from_telemetry='generated_grasp_pose',
+            enforce_face_down=True))
 
         # 6. Close gripper to grasp object
         states.append(GripperControlState(context, action='close'))
 
         # 7. Move back to approach pose (lift object)
         # Apply Z offset to approach pose in telemetry (already done above, but ensuring consistency)
+        # Enforce face-down orientation for lift movement
         states.append(MoveToState(
-            context, pose_from_telemetry='generated_approach_pose'))
+            context, pose_from_telemetry='generated_approach_pose',
+            enforce_face_down=True))
 
         # 8. Return to pickup location with object
+        # Enforce face-down orientation for return movement
         states.append(MoveToState(
-            context, target_location=PICKUP_LOCATION["position"]))
+            context, target_location=PICKUP_LOCATION["position"],
+            enforce_face_down=True))
 
         logger.info(
             "Created pickup sequence with {} states".format(len(states)))
