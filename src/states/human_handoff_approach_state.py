@@ -181,8 +181,10 @@ class HumanHandoffApproachState(BaseState):
             else:
                 # Target hasn't moved much - but we haven't reached it yet, so replan
                 current_tcp = self._get_current_tcp_position()
-                distance = np.linalg.norm(current_tcp - self.current_target_position) if self.current_target_position is not None else float('inf')
-                logger.info(f"Trajectory complete, target stable but not reached (distance: {distance:.3f}m) - replanning")
+                distance = np.linalg.norm(
+                    current_tcp - self.current_target_position) if self.current_target_position is not None else float('inf')
+                logger.info(
+                    f"Trajectory complete, target stable but not reached (distance: {distance:.3f}m) - replanning")
                 self._plan_trajectory_to_target(is_initial=False)
                 return
 
