@@ -133,7 +133,7 @@ HUMAN_MODEL_CONFIG = {
     # 200mm = 150mm torso + 50mm safety (reduced from 250mm)
     'torso_radius': 0.20,
     # 120mm = 50mm arm + 70mm safety (reduced from 150mm)
-    'arm_radius': 0.12,
-    # 140mm = 70mm shoulder + 70mm safety (reduced from 170mm)
-    'shoulder_radius': 0.14,
+    'arm_radius': 0.16,      # increase arm safety
+    # 160mm = 70mm shoulder + 90mm safety (increase)
+    'shoulder_radius': 0.16,
 }

@@ -92,6 +92,12 @@ class UnifiedHandTrackingState(BaseState):
         self.settling_wait_time = 0.5  # Longer settling time after move completes
         self.move_target_position = None  # Store the target position for completion check
         self._in_settling_period = False  # Flag to track settling period
+        # Watchdog for stalled motion
+        self.max_move_wait_time = 1.5
+        self.min_progress_improvement_m = 0.002
+        self.progress_watch_window_s = 0.7
+        self._progress_last_time = 0.0
+        self._progress_last_distance = None
 
     def enter(self):
         """Initialize hand tracker and reset state variables."""
@@ -438,11 +444,24 @@ class UnifiedHandTrackingState(BaseState):
                 f"Move completed: distance to target = {distance*1000:.1f}mm")
             return True
 
-        # If we've waited too long, consider it complete anyway
-        max_wait_time = 3.0  # 3 seconds max wait
-        if current_time - self.move_start_time >= max_wait_time:
+        # Progress watchdog: if not improving, proceed to avoid long stalls
+        if self._progress_last_distance is None:
+            self._progress_last_distance = distance
+            self._progress_last_time = current_time
+        else:
+            if current_time - self._progress_last_time >= self.progress_watch_window_s:
+                improvement = self._progress_last_distance - distance
+                if improvement < self.min_progress_improvement_m:
+                    logger.warning(
+                        f"Move progress stalled (<{self.min_progress_improvement_m*1000:.0f}mm over {self.progress_watch_window_s:.1f}s), proceeding")
+                    return True
+                self._progress_last_distance = distance
+                self._progress_last_time = current_time
+
+        # Safety cap on total wait
+        if current_time - self.move_start_time >= self.max_move_wait_time:
             logger.warning(
-                f"Move timeout: distance to target = {distance*1000:.1f}mm after {max_wait_time}s")
+                f"Move timeout: distance to target = {distance*1000:.1f}mm after {self.max_move_wait_time}s")
             return True
 
         return False

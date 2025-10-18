@@ -16,6 +16,7 @@ from pybullet_planning import get_collision_fn, set_client
 from pybullet_planning import plan_joint_motion, get_movable_joints
 from pybullet_planning import link_pairs_collision, get_joint_positions, set_joint_positions
 from hand_detection.zed_joint_receiver import ZEDJointReceiver, SkeletonData
+from hand_detection.skeleton_data_provider import SkeletonDataProvider
 import logging
 import time
 import numpy as np
@@ -249,6 +250,8 @@ class HumanAwarePathPlanner:
         self.zed_receiver = zed_receiver
         self.ik_solver = ik_solver
         self.config = config
+        # Unified skeleton provider (supports static or ZED based on config)
+        self.skeleton_provider = SkeletonDataProvider(self.zed_receiver)
 
         # GUI is configurable
         use_gui = config.get('planning_gui', False)
@@ -404,8 +407,10 @@ class HumanAwarePathPlanner:
         return False
 
     def _update_human_model(self):
-        """Update human collision model with staleness check."""
-        frame_data = self.zed_receiver.get_latest_frame()
+        """Update human collision model with staleness check (supports static skeleton)."""
+        # Prefer unified provider which respects PATH_PLANNING_CONFIG (static/live)
+        frame_data = self.skeleton_provider.get_latest_frame(
+        ) if self.skeleton_provider else None
 
         if frame_data is None or not frame_data.skeletons:
             if self.person_detected:
@@ -415,13 +420,16 @@ class HumanAwarePathPlanner:
             self.last_skeleton_data = None
             return
 
-        # FIXED: Check data freshness
+        # FIXED: Check data freshness (skip for static provider which always returns fresh timestamp)
+        from config import PATH_PLANNING_CONFIG
+        use_static = PATH_PLANNING_CONFIG.get(
+            'use_static_skeleton_data', False)
         current_time = time.time()
         frame_age = current_time - \
             getattr(frame_data, 'timestamp', current_time)
 
-        if frame_age > 0.5:  # 500ms threshold
-            logger.warning(f"Stale ZED data! Frame age: {frame_age:.3f}s")
+        if not use_static and frame_age > 0.5:  # 500ms threshold for live data
+            logger.warning(f"Stale skeleton data! Frame age: {frame_age:.3f}s")
             self.human_model.clear()
             self.person_detected = False
             return
