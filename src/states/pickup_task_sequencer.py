@@ -34,9 +34,11 @@ class PickupTaskSequencer(TaskSequencer):
     8. MoveToState(pose=PICKUP_LOCATION) - Return to start position
     """
 
-    def __init__(self, state_machine: StateMachine, context: StateContext):
+    def __init__(self, state_machine: StateMachine, context: StateContext, enable_visuals: bool = None, auto_process: bool = True):
         # Set Z offset before creating sequence (it's needed during sequence creation)
         self.z_offset = 0.2  # 20cm above grasp position
+        self.enable_visuals = enable_visuals
+        self.auto_process = auto_process
 
         # Create the sequence of states for pickup task
         pickup_states = self._create_pickup_sequence(context)
@@ -71,7 +73,12 @@ class PickupTaskSequencer(TaskSequencer):
 
         # 2. Generate pickup pose using GGCNN2/GR-ConvNet
         # Pass z_offset so GraspingState can create approach pose correctly
-        states.append(GraspingState(context, approach_z_offset=self.z_offset))
+        states.append(GraspingState(
+            context,
+            approach_z_offset=self.z_offset,
+            enable_visuals=self.enable_visuals,
+            auto_process=self.auto_process
+        ))
 
         # 3. Open gripper
         states.append(GripperControlState(context, action='open'))

@@ -566,6 +566,7 @@ class DebugSystemManager:
         print("  sequencers - Show available sequencers")
         print("  run <number> - Execute state by number")
         print("  seq <number> - Execute sequencer by number")
+        print("  quick13 - Run sequencer 1 then 3 (headless)")
         print("  config - Show config summary")
         print("  profile <name> - Set grasp object profile")
         print("  camera - Toggle camera transform mode (calibrated/simple)")
@@ -597,6 +598,8 @@ class DebugSystemManager:
                     self._execute_state_by_number(command)
                 elif command.startswith("seq "):
                     self._execute_sequencer_by_number(command)
+                elif command == "quick13":
+                    self._run_quick_13_headless()
                 elif command == "camera":
                     self._toggle_camera_mode()
                 elif command == "camera info":
@@ -627,6 +630,78 @@ class DebugSystemManager:
                 print(f"❌ Error: {e}")
 
         print("👋 Exiting debug mode")
+
+    def _run_quick_13_headless(self):
+        """Run sequencer 1 then 3 without GUIs or prompts, using static skeleton and real OPC."""
+        try:
+            # Enforce real OPC mode if not set
+            if self.opc_mode is None:
+                self.opc_mode = 'real'
+            if self.opc_mode != 'real':
+                print("⚠️ OPC mode is not 'real'. Proceeding may use mock client.")
+
+            # Force headless visuals off and static skeleton via config
+            from config import PATH_PLANNING_CONFIG, DEBUG_MODE
+            # Disable debug visuals for grasping
+            self.debug_visuals = False
+            # Ensure static skeleton is enabled
+            PATH_PLANNING_CONFIG['use_static_skeleton_data'] = True
+
+            # Rebuild context to propagate static skeleton setting into providers if needed
+            # (Context keeps zed_receiver but SkeletonDataProvider will read static flag)
+
+            # Execute Pickup Sequencer (1) headless: no visuals, auto_process
+            print("\n🚀 Executing: Pickup Task Sequencer (headless)")
+            from states.pickup_task_sequencer import PickupTaskSequencer
+            sequencer1 = PickupTaskSequencer(
+                self.state_machine, self.context, enable_visuals=False, auto_process=True)
+
+            # Wire sequencer into state machine just like normal path
+            self.state_machine.on_state_completion = sequencer1.queue_next_task
+            sequencer1.queue_next_task()  # enqueue first state
+
+            self.execution_active = True
+            self.force_complete = False
+            last_logged_step = -1
+            sequence_complete = False
+
+            while not sequence_complete and not self.force_complete:
+                sequencer1.step()
+                time.sleep(0.1)
+                progress = sequencer1.get_progress()
+                current_step = progress['current_step']
+                if current_step > 0 and current_step != last_logged_step:
+                    logger.info(
+                        f"Pickup progress: {current_step}/{progress['total_steps']} ({progress['progress_percent']:.1f}%)")
+                    last_logged_step = current_step
+                # Completion check with follow-up queue chance
+                if not sequencer1.task_queue and self.state_machine.current_state and self.state_machine.current_state.is_complete():
+                    try:
+                        sequencer1.queue_next_task()
+                    except Exception:
+                        pass
+                    if not sequencer1.task_queue and self.state_machine.current_state.is_complete():
+                        sequence_complete = True
+
+            print("✅ Completed: Pickup Task Sequencer")
+
+            # Execute Simple Placement Sequencer (3) headless
+            print("\n🚀 Executing: Simple Placement Sequencer (headless)")
+            from states.simple_placement_sequencer import create_simple_placement_sequencer, SimplePlacementSequencer
+            sequencer3 = create_simple_placement_sequencer(
+                self.state_machine, self.context)
+
+            # Run until complete
+            while not sequencer3.is_complete():
+                sequencer3.step()
+                time.sleep(0.1)
+
+            print("✅ Completed: Simple Placement Sequencer")
+
+        except Exception as e:
+            print(f"❌ Error in quick13 run: {e}")
+        finally:
+            self.execution_active = False
 
     def _toggle_camera_mode(self):
         """Toggle between calibrated and simple camera transform modes."""

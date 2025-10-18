@@ -128,12 +128,12 @@ HUMAN_MODEL_CONFIG = {
     #   - Dynamic parts (arms): +100mm (ISO minimum, arms move fastest)
     #   - Shoulders: +100mm (high-risk articulation point)
 
-    # 200mm = 100mm head + 100mm safety (ISO compliant)
-    'head_radius': 0.20,
-    # 250mm = 150mm torso + 100mm safety (conservative)
-    'torso_radius': 0.25,
-    # 150mm = 50mm arm + 100mm safety (ISO minimum)
-    'arm_radius': 0.15,
-    # 170mm = 70mm shoulder + 100mm safety (conservative)
-    'shoulder_radius': 0.17,
+    # 250mm = 100mm head + 150mm safety (increased for better head protection)
+    'head_radius': 0.25,
+    # 200mm = 150mm torso + 50mm safety (reduced from 250mm)
+    'torso_radius': 0.20,
+    # 120mm = 50mm arm + 70mm safety (reduced from 150mm)
+    'arm_radius': 0.12,
+    # 140mm = 70mm shoulder + 70mm safety (reduced from 170mm)
+    'shoulder_radius': 0.14,
 }
