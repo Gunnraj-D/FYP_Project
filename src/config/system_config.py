@@ -55,15 +55,15 @@ HAND_OCCLUSION_CONFIG = {
 
     # Grace period: wait this long for hand to become unoccluded (seconds)
     # If hand becomes visible within this time, continue normally
-    'grace_period_s': 2.0,
+    'grace_period_s': 3.0,
 
     # Number of consecutive occluded frames to confirm occlusion
     # Prevents false positives from single bad frames
-    'consecutive_frames_threshold': 3,
+    'consecutive_frames_threshold': 5,
 
     # Timeout: if no hand appears within this time, fail (seconds)
     # This handles the case where operator never presents their hand
-    'no_hand_timeout_s': 2.0,
+    'no_hand_timeout_s': 5.0,
 }
 
 # Enhanced occlusion detection parameters (multi-factor approach)

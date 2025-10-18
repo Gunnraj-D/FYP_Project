@@ -60,6 +60,9 @@ class HumanHandoffApproachState(BaseState):
         self._final_hold_start_time = 0.0
         self._final_hold_last_distance = float('inf')
         self._final_hold_max_time = 2.0  # seconds to allow robot to settle at last waypoint
+        # Track last planned target and replan time for proper gating
+        self.last_planned_target = None
+        self.last_replan_time = 0.0
 
         # Planning components
         self.planner = None
@@ -218,12 +221,32 @@ class HumanHandoffApproachState(BaseState):
                     self._final_hold_last_distance = distance
                     return
 
-                # Timeout: proceed to replan
+                # Timeout: proceed to replan, but gate by min interval or target delta
                 if hold_elapsed >= self._final_hold_max_time:
-                    logger.info(
-                        f"Final hold timeout ({hold_elapsed:.1f}s), replanning (distance: {distance:.3f}m)")
-                    self._final_hold_active = False
-                    self._plan_trajectory_to_target(is_initial=False)
+                    from config import PATH_PLANNING_CONFIG
+                    min_interval = PATH_PLANNING_CONFIG.get(
+                        'min_replan_interval', 1.0)
+                    delta_for_replan = PATH_PLANNING_CONFIG.get(
+                        'replan_threshold_position', 0.08)
+                    now = time.time()
+                    if self.last_planned_target is None:
+                        self.last_planned_target = self.current_target_position.copy()
+                    target_delta = np.linalg.norm(
+                        self.current_target_position - self.last_planned_target)
+
+                    if (now - self.last_replan_time) >= min_interval or target_delta >= delta_for_replan:
+                        logger.info(
+                            f"Final hold timeout ({hold_elapsed:.1f}s), replanning (distance: {distance:.3f}m, Δtarget={target_delta:.3f}m)")
+                        self._final_hold_active = False
+                        self._plan_trajectory_to_target(is_initial=False)
+                        self.last_planned_target = self.current_target_position.copy()
+                        self.last_replan_time = now
+                        return
+                    # Else, resend final waypoint to induce small adjustment and keep holding
+                    if self.trajectory and len(self.trajectory) > 0:
+                        from control.command_bus import SetJoints
+                        self.context.commands.send(
+                            SetJoints(self.trajectory[-1]))
                     return
                 # Keep holding otherwise
                 return

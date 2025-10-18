@@ -22,8 +22,8 @@ PATH_PLANNING_CONFIG = {
     'max_iterations': 2000,            # Maximum planning iterations
     'planning_timeout': 0.5,           # Initial planning timeout (seconds)
     'replan_timeout': 0.1,             # Replanning timeout (seconds)
-    # Post-processing smoothing passes (reduced from 20 for safety)
-    'smoothing_iterations': 20,
+    # Post-processing smoothing passes (lower for subtle path variation)
+    'smoothing_iterations': 8,
 
     # ========================================================================
     # IK SOLVER CONFIGURATION (NEW - for robust convergence)
@@ -44,12 +44,12 @@ PATH_PLANNING_CONFIG = {
     'ik_tolerance': 1e-3,
 
     # Rolling horizon
-    'horizon_time': 0.5,               # Plan ahead time (seconds)
+    'horizon_time': 0.35,              # Plan ahead time (seconds)
     # Minimum time between replans (seconds) - INCREASED to reduce jitter
-    'min_replan_interval': 2.2,
+    'min_replan_interval': .9,
     # Replan if human moves >15cm - INCREASED to reduce jitter
-    'replan_threshold_position': 0.15,
-    'replan_threshold_velocity': 0.30,  # Replan if human speed >0.3m/s
+    'replan_threshold_position': 0.08,
+    'replan_threshold_velocity': 0.22,  # Replan if human speed >0.22m/s
 
     # SSM (Speed and Separation Monitoring) zones per ISO/TS 15066
     # INCREASED for real-world safety - robot maintains larger distance

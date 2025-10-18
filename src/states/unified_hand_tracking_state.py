@@ -98,6 +98,11 @@ class UnifiedHandTrackingState(BaseState):
         self.progress_watch_window_s = 0.7
         self._progress_last_time = 0.0
         self._progress_last_distance = None
+        # Debounce overall success/failure
+        self.min_run_time_before_failure = 2.5  # seconds
+        self.min_run_time_before_success = 2.5  # seconds
+        self.min_moves_required_before_success = 1
+        self.moves_issued_count = 0
 
     def enter(self):
         """Initialize hand tracker and reset state variables."""
@@ -147,6 +152,7 @@ class UnifiedHandTrackingState(BaseState):
             self.waiting_for_move_completion = False
             self._in_settling_period = False
             self.move_target_position = None
+            self.moves_issued_count = 0
 
             print("✅ UnifiedHandTrackingState initialized successfully")
             logger.info("✅ UnifiedHandTrackingState initialized successfully")
@@ -169,8 +175,8 @@ class UnifiedHandTrackingState(BaseState):
         """
         current_time = time.time()
 
-        # Throttle to 10Hz
-        if current_time - self.last_stability_check < 0.1:
+        # Throttle to 8Hz (reduce CPU and spurious flips)
+        if current_time - self.last_stability_check < 0.125:
             return
         self.last_stability_check = current_time
 
@@ -185,12 +191,15 @@ class UnifiedHandTrackingState(BaseState):
         # Update GUI with occlusion status
         self._update_gui_occlusion_status(occlusion_status)
 
-        # Check for occlusion failure
+        # Check for occlusion failure (debounced: don't fail instantly)
         if occlusion_status.state == OcclusionStateEnum.OCCLUDED_FAILED:
-            logger.warning(
-                f"Hand occlusion detected: {occlusion_status.reason}")
-            self.occlusion_failed = True
-            return
+            # Only mark failure after minimum runtime; otherwise keep looping
+            if (current_time - self.state_start_time) >= self.min_run_time_before_failure:
+                logger.warning(
+                    f"Hand occlusion detected (debounced): {occlusion_status.reason}")
+                self.occlusion_failed = True
+                return
+            # Not past debounce yet; continue without marking failure
 
         # Log temporary occlusion (informational)
         if occlusion_status.state == OcclusionStateEnum.TEMPORARILY_OCCLUDED:
@@ -410,6 +419,7 @@ class UnifiedHandTrackingState(BaseState):
             # Store target for completion check
             self.move_target_position = desired_target_base
             self._in_settling_period = False  # Reset settling flag
+            self.moves_issued_count += 1
         else:
             logger.warning("❌ IK solve failed - no solutions found")
             self.is_moving_to_target = False
@@ -563,20 +573,25 @@ class UnifiedHandTrackingState(BaseState):
 
         # Check for occlusion failure
         if self.occlusion_failed:
-            logger.warning("Hand tracking failed due to occlusion")
+            # Debounce early failures: require minimum runtime
+            if (current_time - self.state_start_time) < self.min_run_time_before_failure:
+                return False
+            logger.warning("Hand tracking failed due to occlusion (debounced)")
             return True
 
         # Check if hand has been stable for the required duration
         if self.is_hand_stable:
             stable_duration = current_time - self.hand_stable_start_time
-            if stable_duration >= HAND_STABILITY_TIME_THRESHOLD:
+            if (stable_duration >= HAND_STABILITY_TIME_THRESHOLD and
+                    (current_time - self.state_start_time) >= self.min_run_time_before_success and
+                    self.moves_issued_count >= self.min_moves_required_before_success):
                 logger.info(
                     f"Hand tracking complete - hand stable for {stable_duration:.1f}s")
                 return True
 
         # Check timeout (safety measure)
         elapsed_time = current_time - self.state_start_time
-        timeout_threshold = 20.0  # 20 seconds timeout
+        timeout_threshold = 25.0  # increase to avoid premature completion
         if elapsed_time > timeout_threshold:
             logger.warning("Hand tracking timeout reached")
             # Mark as timed out so the sequencer can route to fallback instead of success
