@@ -160,8 +160,8 @@ class HandTracker:
 
         # Filtering state - keep last 5 frames for outlier detection
         self.position_history = []
-        self.max_history_size = 5
-        self.filtering_threshold = 0.20  # 20cm threshold
+        self.max_history_size = 8
+        self.filtering_threshold = 0.12  # tighten to 12cm to reduce XY jitter
 
     def _setup_detector(self):
         """Setup MediaPipe hand detector."""

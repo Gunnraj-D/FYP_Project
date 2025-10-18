@@ -87,8 +87,9 @@ class UnifiedHandTrackingState(BaseState):
         self.is_moving_to_target = False
         self.waiting_for_move_completion = False
         self.move_start_time = 0.0
-        self.move_completion_wait_time = 0.5  # Wait 0.5 seconds for move to complete
-        self.settling_wait_time = 0.3  # Additional settling time after move completes
+        # Slightly longer wait for move to complete
+        self.move_completion_wait_time = 0.6
+        self.settling_wait_time = 0.5  # Longer settling time after move completes
         self.move_target_position = None  # Store the target position for completion check
         self._in_settling_period = False  # Flag to track settling period
 

@@ -17,13 +17,13 @@ PATH_PLANNING_CONFIG = {
     # Use GUI mode for debugging (False = DIRECT mode)
     'planning_gui': False,
     'check_self_collision': False,     # Enable self-collision checking
-    'step_size': 0.15,                 # Joint space step size (radians)
+    'step_size': 0.10,                 # Joint space step size (radians)
     'goal_bias': 0.3,                  # Probability of sampling goal
     'max_iterations': 2000,            # Maximum planning iterations
     'planning_timeout': 0.5,           # Initial planning timeout (seconds)
     'replan_timeout': 0.1,             # Replanning timeout (seconds)
     # Post-processing smoothing passes (reduced from 20 for safety)
-    'smoothing_iterations': 10,
+    'smoothing_iterations': 20,
 
     # ========================================================================
     # IK SOLVER CONFIGURATION (NEW - for robust convergence)
@@ -34,10 +34,10 @@ PATH_PLANNING_CONFIG = {
     # Number of position perturbations to try per goal
     # Slightly perturbs target position to find reachable alternatives
     'ik_position_samples': 5,
-    # XY perturbation range (meters) - typically ±20mm is safe
-    'ik_xy_perturbation': 0.02,
-    # Z perturbation range (meters) - typically ±30mm for vertical tolerance
-    'ik_z_perturbation': 0.03,
+    # XY perturbation range (meters) - reduce to 10mm for more stable targets
+    'ik_xy_perturbation': 0.01,
+    # Z perturbation range (meters) - reduce to 20mm
+    'ik_z_perturbation': 0.02,
     # Maximum IK iterations per attempt (higher = more robust, slower)
     'ik_max_iterations': 200,
     # IK convergence tolerance (meters) - 1mm is good balance
@@ -46,19 +46,19 @@ PATH_PLANNING_CONFIG = {
     # Rolling horizon
     'horizon_time': 0.5,               # Plan ahead time (seconds)
     # Minimum time between replans (seconds) - INCREASED to reduce jitter
-    'min_replan_interval': 1.0,
+    'min_replan_interval': 2.2,
     # Replan if human moves >15cm - INCREASED to reduce jitter
     'replan_threshold_position': 0.15,
     'replan_threshold_velocity': 0.30,  # Replan if human speed >0.3m/s
 
     # SSM (Speed and Separation Monitoring) zones per ISO/TS 15066
     # INCREASED for real-world safety - robot maintains larger distance
-    'comfort_distance': 0.60,          # ≥0.6m: normal speed (100%) - was 0.5m
-    # ≥0.4m: reduced speed (50-100%) - was 0.3m
-    'warning_distance': 0.40,
-    # ≥0.2m: critical/stop (0-50%) - was 0.12m
-    'hard_min_distance': 0.20,
-    'emergency_stop_distance': 0.15,   # <0.15m: immediate stop - was 0.08m
+    'comfort_distance': 0.80,          # ≥0.8m: normal speed (100%)
+    # ≥0.6m: reduced speed (50-100%)
+    'warning_distance': 0.60,
+    # ≥0.35m: critical/stop (0-50%)
+    'hard_min_distance': 0.35,
+    'emergency_stop_distance': 0.28,   # <0.28m: immediate stop
 
     # Speed scaling
     'speed_scale_comfort': 1.0,        # 100% speed in comfort zone
@@ -129,7 +129,7 @@ HUMAN_MODEL_CONFIG = {
     #   - Shoulders: +100mm (high-risk articulation point)
 
     # 250mm = 100mm head + 150mm safety (increased for better head protection)
-    'head_radius': 0.25,
+    'head_radius': 0.34,
     # 200mm = 150mm torso + 50mm safety (reduced from 250mm)
     'torso_radius': 0.20,
     # 120mm = 50mm arm + 70mm safety (reduced from 150mm)

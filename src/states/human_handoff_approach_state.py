@@ -55,6 +55,12 @@ class HumanHandoffApproachState(BaseState):
         self.position_threshold = position_threshold
         self.hand_joint_name = hand_joint_name
 
+        # Finalization hold to avoid oscillatory replanning when robot is still catching up
+        self._final_hold_active = False
+        self._final_hold_start_time = 0.0
+        self._final_hold_last_distance = float('inf')
+        self._final_hold_max_time = 2.0  # seconds to allow robot to settle at last waypoint
+
         # Planning components
         self.planner = None
         self.trajectory = None
@@ -179,13 +185,47 @@ class HumanHandoffApproachState(BaseState):
                 self._plan_trajectory_to_target(is_initial=False)
                 return
             else:
-                # Target hasn't moved much - but we haven't reached it yet, so replan
+                # Target hasn't moved much - but we haven't reached it yet.
+                # Before replanning, hold at the final waypoint and allow the robot to physically catch up.
                 current_tcp = self._get_current_tcp_position()
                 distance = np.linalg.norm(
                     current_tcp - self.current_target_position) if self.current_target_position is not None else float('inf')
-                logger.info(
-                    f"Trajectory complete, target stable but not reached (distance: {distance:.3f}m) - replanning")
-                self._plan_trajectory_to_target(is_initial=False)
+
+                # Initialize final hold on first pass
+                if not self._final_hold_active:
+                    logger.info(
+                        f"Trajectory complete, target stable but not reached (distance: {distance:.3f}m) - holding to settle")
+                    self._final_hold_active = True
+                    self._final_hold_start_time = time.time()
+                    self._final_hold_last_distance = distance
+                    # Re-send last waypoint to ensure controller is targeting it
+                    if self.trajectory and len(self.trajectory) > 0:
+                        from control.command_bus import SetJoints
+                        last_wp = self.trajectory[-1]
+                        self.context.commands.send(SetJoints(last_wp))
+                    return
+
+                # During hold: check if we reached or improved
+                hold_elapsed = time.time() - self._final_hold_start_time
+                if distance <= self.position_threshold:
+                    logger.info(
+                        "Final hold: target reached during settle window")
+                    self._complete_motion()
+                    return
+
+                # If improving, keep holding
+                if distance < self._final_hold_last_distance - 0.005:  # 5mm improvement
+                    self._final_hold_last_distance = distance
+                    return
+
+                # Timeout: proceed to replan
+                if hold_elapsed >= self._final_hold_max_time:
+                    logger.info(
+                        f"Final hold timeout ({hold_elapsed:.1f}s), replanning (distance: {distance:.3f}m)")
+                    self._final_hold_active = False
+                    self._plan_trajectory_to_target(is_initial=False)
+                    return
+                # Keep holding otherwise
                 return
 
         # 5. Validate current trajectory segment is still safe
@@ -268,6 +308,11 @@ class HumanHandoffApproachState(BaseState):
         # Cleanup planner
         if self.planner:
             self.planner.cleanup()
+
+        # Reset final hold flags
+        self._final_hold_active = False
+        self._final_hold_start_time = 0.0
+        self._final_hold_last_distance = float('inf')
 
     def _update_target_from_hand(self) -> bool:
         """
